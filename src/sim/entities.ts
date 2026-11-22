@@ -198,7 +198,7 @@ export interface Relation {
 }
 
 export interface InfraProject {
-  kind: 'road' | 'rail' | 'highway';
+  kind: 'road' | 'rail' | 'highway' | 'pave';
   path: number[];
   i: number;
   key: string;
@@ -244,6 +244,7 @@ export class Kingdom {
   nukedBy = 0;        // kingdom id that last nuked us (for retaliation)
   nukedAt = 0;
   lastLaunch = -99999;
+  splitCD = 0;
   infra: InfraProject | null = null;
   links = new Set<string>();
 

@@ -8,7 +8,7 @@ import { SPECIES } from './species';
 import { T, TER, RES } from './terrain';
 import { refreshStats, MISSION } from './ai_units';
 import { updateInfrastructure } from './infra';
-import { nuclearPolicy, hasTech } from './politics';
+import { nuclearPolicy, hasTech, considerSplit } from './politics';
 
 const DT = 30;
 
@@ -48,6 +48,7 @@ export function updateKingdom(g: Game, k: Kingdom): void {
   if (k.t2 % 6 === 3) expand(g, k);
   if (k.t2 % 2 === 1) specialOps(g, k);
   updateInfrastructure(g, k);
+  if (k.t2 % 10 === 7) considerSplit(g, k);
 }
 
 // ------------------------------------------------------------------ research
@@ -379,59 +380,69 @@ function expand(g: Game, k: Kingdom): void {
       const sc = citySiteScore(g, k, x, y) - r * 0.3;
       if (sc > bs) { bs = sc; best = { x: x + 0.5, y: y + 0.5 }; }
     }
-    const settlers = c.members.filter(u => u.ageT >= ADULT_AGE * TPY && u.job !== JOB.SOLDIER && !u.order && !u.isKing).slice(0, 4);
+    const settlers = c.members.filter(u => u.ageT >= ADULT_AGE * TPY && u.job !== JOB.SOLDIER && !u.order && !u.isKing).slice(0, 5);
     if (settlers.length < 3) continue;
-    if (best) {
-      for (const u of settlers) {
-        g.removeFromCity(u);
-        u.kingdom = k;
-        u.job = JOB.SETTLER;
-        u.order = { type: ORD.SETTLE, city: null, x: best.x, y: best.y, since: g.tick };
-        u.path = null;
-        u.phase = 0;
-        u.carry = -1;
-      }
-      c.food -= 10;
-      return;
-    }
-    // overseas colonization
     const docks = c.find('docks');
-    if (docks && k.caps.ship >= 0) {
-      let site: { x: number; y: number } | null = null, ss = 12;
-      const src = w.nearestWater(docks.cx, docks.cy, 4);
-      if (src < 0) continue;
-      const body = w.water[src];
-      const range = 30 + k.caps.ship * 25;
-      for (let s = 0; s < 80; s++) {
-        const x = Math.floor(c.x + g.rng.range(-range, range)), y = Math.floor(c.y + g.rng.range(-range, range));
-        if (x < 4 || y < 4 || x >= w.w - 4 || y >= w.h - 4) continue;
-        const i = y * w.w + x;
-        if (w.island[i] === island || w.island[i] < 0) continue;
-        const wi = w.nearestWater(x + 0.5, y + 0.5, 6);
-        if (wi < 0 || w.water[wi] !== body) continue;
-        const sc = citySiteScore(g, k, x, y);
-        if (sc > ss) { ss = sc; site = { x: x + 0.5, y: y + 0.5 }; }
-      }
-      if (!site) continue;
-      const landing = landingSpot(g, docks.cx, docks.cy, site);
-      if (!landing) continue;
-      const boat = spawnBoat(g, k, docks.cx, docks.cy, Math.max(0, Math.min(k.caps.ship, 5)), MISSION.TRANSPORT, landing.x, landing.y);
-      if (!boat) continue;
-      for (const u of settlers) {
-        g.removeFromCity(u);
-        u.kingdom = k;
-        u.job = JOB.SETTLER;
-        u.order = { type: ORD.SETTLE, city: null, x: site.x, y: site.y, since: g.tick };
-        u.inBoat = boat;
-        u.path = null;
-        u.tUnit = null;
-        u.carry = -1;
-        boat.cargo!.push(u);
-      }
-      g.log(`Colonists from ${c.name} set sail across the sea`, 'colony', c.x, c.y, k.css);
+    // seafaring nations also colonize other continents, not only when home is full
+    const preferSea = !!docks && k.caps.ship >= 1 && g.rng.chance(0.3);
+    if (best && !preferSea) {
+      settleOnLand(g, k, c, settlers, best);
       return;
     }
+    if (docks && k.caps.ship >= 0 && colonizeOverseas(g, k, c, docks, island, settlers)) return;
+    if (best) { settleOnLand(g, k, c, settlers, best); return; }
   }
+}
+
+function settleOnLand(g: Game, k: Kingdom, c: City, settlers: Unit[], best: { x: number; y: number }): void {
+  for (const u of settlers) {
+    g.removeFromCity(u);
+    u.kingdom = k;
+    u.job = JOB.SETTLER;
+    u.order = { type: ORD.SETTLE, city: null, x: best.x, y: best.y, since: g.tick };
+    u.path = null;
+    u.phase = 0;
+    u.carry = -1;
+  }
+  c.food -= 10;
+}
+
+function colonizeOverseas(g: Game, k: Kingdom, c: City, docks: { cx: number; cy: number }, island: number, settlers: Unit[]): boolean {
+  const w = g.world;
+  let site: { x: number; y: number } | null = null, ss = 12;
+  const src = w.nearestWater(docks.cx, docks.cy, 4);
+  if (src < 0) return false;
+  const body = w.water[src];
+  const range = 40 + k.caps.ship * 45;
+  for (let s = 0; s < 120; s++) {
+    const x = Math.floor(c.x + g.rng.range(-range, range)), y = Math.floor(c.y + g.rng.range(-range, range));
+    if (x < 4 || y < 4 || x >= w.w - 4 || y >= w.h - 4) continue;
+    const i = y * w.w + x;
+    if (w.island[i] === island || w.island[i] < 0) continue;
+    const wi = w.nearestWater(x + 0.5, y + 0.5, 6);
+    if (wi < 0 || w.water[wi] !== body) continue;
+    // empty lands are the most tempting
+    const sc = citySiteScore(g, k, x, y) + (w.owner[i] ? 0 : 6);
+    if (sc > ss) { ss = sc; site = { x: x + 0.5, y: y + 0.5 }; }
+  }
+  if (!site) return false;
+  const landing = landingSpot(g, docks.cx, docks.cy, site);
+  if (!landing) return false;
+  const boat = spawnBoat(g, k, docks.cx, docks.cy, Math.max(0, Math.min(k.caps.ship, 5)), MISSION.TRANSPORT, landing.x, landing.y);
+  if (!boat) return false;
+  for (const u of settlers) {
+    g.removeFromCity(u);
+    u.kingdom = k;
+    u.job = JOB.SETTLER;
+    u.order = { type: ORD.SETTLE, city: null, x: site.x, y: site.y, since: g.tick };
+    u.inBoat = boat;
+    u.path = null;
+    u.tUnit = null;
+    u.carry = -1;
+    boat.cargo!.push(u);
+  }
+  g.log(`⛵ Colonists from ${c.name} set sail for new lands`, 'colony', c.x, c.y, k.css);
+  return true;
 }
 
 // ------------------------------------------------------------------ navies, air, nukes, space

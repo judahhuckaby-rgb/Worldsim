@@ -1,6 +1,6 @@
 {
   "name": "worldsim-ages",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "WorldSim Ages - a god-simulation sandbox where civilizations research their way from the Stone Age to the Space Age",
   "author": "WorldSim",
   "license": "MIT",
@@ -44,7 +44,14 @@
     "portable": {
       "artifactName": "WorldSim-Ages-Portable-${version}.${ext}"
     },
-    "afterPack": "scripts/after-pack.cjs"
+    "afterPack": "scripts/after-pack.cjs",
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "judahhuckaby-rgb",
+        "repo": "Worldsim"
+      }
+    ]
   },
   "devDependencies": {
     "@capacitor/android": "^6.2.0",
@@ -57,5 +64,8 @@
     "resedit": "^2.0.3",
     "typescript": "^5.6.3",
     "vite": "^5.4.11"
+  },
+  "dependencies": {
+    "electron-updater": "^6.3.9"
   }
 }

@@ -129,7 +129,7 @@ export class Pathfinder {
           if (tj === T.MOUNTAIN) mult = 0.25;
           else if (tj === T.HILLS || tj === T.SWAMP) mult = 0.6;
           else if (tj === T.RAIL) mult = mode === 2 ? 2.5 : 0.5;
-          else if (tj === T.ROAD || tj === T.PAVED) mult = mode === 2 ? 0.3 : 2.5;
+          else if (tj === T.ROAD || tj === T.PAVED || tj === T.HIGHWAY) mult = mode === 2 ? 0.3 : 2.5;
           else mult = 1;
           if (world.bld[j]) mult *= 0.1;
         } else {

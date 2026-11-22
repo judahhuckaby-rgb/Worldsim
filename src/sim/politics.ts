@@ -222,3 +222,74 @@ function voteBan(g: Game, k: Kingdom): boolean {
   if (k.wars > 0 && nuclear) p *= 0.5;
   return g.rng.chance(Math.min(0.95, p));
 }
+
+// ------------------------------------------------------------------ nations splitting apart
+/**
+ * Large, strained nations can break in two along geographic lines — by civil war, or (in modern
+ * times) by a peaceful dissolution. The breakaway half is named after its direction ("North X").
+ */
+export function considerSplit(g: Game, k: Kingdom): void {
+  if (!g.laws.rebellions || k.cities.length < 9 || g.tick < k.splitCD) return;
+  let loyal = 0;
+  for (const c of k.cities) loyal += c.loyalty;
+  loyal /= k.cities.length;
+  const stress = 1 + k.wars * 0.6 + (loyal < 25 ? 1 : 0) + (k.cities.length > 16 ? 1 : 0);
+  if (!g.rng.chance(Math.min(0.12, 0.004 * (k.cities.length - 8) * stress))) return;
+  splitNation(g, k);
+}
+
+export function splitNation(g: Game, k: Kingdom): Kingdom | null {
+  const cap = k.capital;
+  if (!cap || k.cities.length < 6) return null;
+  // the city farthest from the capital becomes the seed of the breakaway state
+  let seed: City | null = null, far = 0;
+  for (const c of k.cities) {
+    const d = Math.hypot(c.x - cap.x, c.y - cap.y);
+    if (d > far) { far = d; seed = c; }
+  }
+  if (!seed || far < 25) return null;
+  const group = k.cities.filter(c => c !== cap && Math.hypot(c.x - seed!.x, c.y - seed!.y) < Math.hypot(c.x - cap.x, c.y - cap.y));
+  if (group.length < 3 || group.length > k.cities.length - 3) return null;
+  const counts = [0, 0, 0, 0];
+  for (const c of group) for (const u of c.members) counts[u.species]++;
+  let sp = k.species;
+  for (let i = 0; i < counts.length; i++) if (counts[i] > counts[sp]) sp = i;
+  const nk = g.createKingdom(sp, k);
+  const dx = seed.x - cap.x, dy = seed.y - cap.y;
+  const dir = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'East' : 'West') : dy > 0 ? 'South' : 'North';
+  nk.baseName = /^(North|South|East|West) /.test(k.baseName) ? seed.name : `${dir} ${k.baseName}`;
+  const share = group.length / k.cities.length;
+  const wh = Math.floor(k.warheads * share);
+  k.warheads -= wh;
+  nk.warheads = wh;
+  nk.nuclearTested = wh > 0 || k.nuclearTested;
+  for (const c of group) {
+    const oi = k.cities.indexOf(c);
+    if (oi >= 0) k.cities.splice(oi, 1);
+    nk.cities.push(c);
+    c.kingdom = nk;
+    c.loyalty = 60;
+    c.revoltT = 0;
+    for (const u of c.members) { u.kingdom = nk; u.order = null; u.isKing = false; }
+    for (const b of c.buildings) b.style = Math.min(b.style, nk.era);
+    for (const i of c.tiles) g.world.markN(i);
+  }
+  nk.capital = group.reduce((a, b) => (b.members.length > a.members.length ? b : a), group[0]);
+  k.links.clear();
+  k.infra = null;
+  k.splitCD = nk.splitCD = g.tick + TPY * 80;
+  const leader = nk.capital.members.find(u => u.ageT >= 14 * TPY);
+  if (leader) { nk.king = leader; leader.isKing = true; }
+  const peaceful = k.era >= 6 ? g.rng.chance(0.55) : g.rng.chance(0.15);
+  const oldName = g.kName(k);
+  if (peaceful) {
+    const r = k.relation(nk), ro = nk.relation(k);
+    r.opinion = ro.opinion = 25;
+    r.nap = ro.nap = g.tick + TPY * 30;
+    g.log(`🗺 ${oldName} peacefully split in two — ${g.kName(nk)} is now independent`, 'split', nk.capital.x, nk.capital.y, nk.css, true);
+  } else {
+    g.log(`🗺 Civil war! ${oldName} has split and ${g.kName(nk)} fights for independence`, 'split', nk.capital.x, nk.capital.y, nk.css, true);
+    g.declareWar(k, nk, 'civil war');
+  }
+  return nk;
+}

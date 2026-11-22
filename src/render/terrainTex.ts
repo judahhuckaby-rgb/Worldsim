@@ -1,6 +1,6 @@
-// Chunked terrain texture: 4 art pixels per tile, includes flora, deposits, roads, farms and borders.
+// Terrain texture with level of detail: overview + lazily built 4px-per-tile chunks (flora, deposits, roads, farms, borders).
 import type { Game } from '../sim/game';
-import { TER, T, F, R } from '../sim/terrain';
+import { TER, T, F, R, isRoad } from '../sim/terrain';
 import { ERAS } from '../sim/tech';
 import { hash2 } from '../core/rng';
 
@@ -8,20 +8,35 @@ export type MapMode = 'normal' | 'political' | 'eras' | 'pollution';
 
 const CH = 32;     // tiles per chunk side
 const S = 4;       // pixels per tile
+const MAX_CHUNKS = 280;     // detail chunks kept in memory (LRU)
+const DETAIL_ZOOM = 3.2;    // below this many screen px per tile, draw the 1px-per-tile overview
 
 interface Chunk {
   canvas: HTMLCanvasElement;
   ctx: CanvasRenderingContext2D;
   img: ImageData;
   dirty: boolean;
+  stale: boolean;
+  used: number;
 }
 
+/**
+ * Level-of-detail terrain: a 1 pixel-per-tile overview of the whole world (cheap, always current)
+ * plus 4 pixel-per-tile detail chunks that are only created for the area being looked at and
+ * evicted when far away, so even enormous worlds stay within a fixed memory budget.
+ */
 export class TerrainTex {
   g: Game;
   cw: number;
   ch: number;
-  chunks: Chunk[] = [];
+  chunks = new Map<number, Chunk>();
   mode: MapMode = 'normal';
+  overview: HTMLCanvasElement;
+  private octx: CanvasRenderingContext2D;
+  private oimg: ImageData;
+  private odirty = true;
+  private frame = 0;
+  private pool: Chunk[] = [];
   private tmp = [0, 0, 0];
 
   constructor(g: Game) {
@@ -29,13 +44,11 @@ export class TerrainTex {
     const w = g.world;
     this.cw = Math.ceil(w.w / CH);
     this.ch = Math.ceil(w.h / CH);
-    for (let i = 0; i < this.cw * this.ch; i++) {
-      const canvas = document.createElement('canvas');
-      canvas.width = CH * S;
-      canvas.height = CH * S;
-      const ctx = canvas.getContext('2d')!;
-      this.chunks.push({ canvas, ctx, img: ctx.createImageData(CH * S, CH * S), dirty: true });
-    }
+    this.overview = document.createElement('canvas');
+    this.overview.width = w.w;
+    this.overview.height = w.h;
+    this.octx = this.overview.getContext('2d')!;
+    this.oimg = this.octx.createImageData(w.w, w.h);
     this.redrawAll();
   }
 
@@ -47,10 +60,12 @@ export class TerrainTex {
 
   redrawAll(): void {
     const w = this.g.world;
-    for (let i = 0; i < w.n; i++) this.drawTile(i);
+    for (let i = 0; i < w.n; i++) this.overviewPixel(i);
+    for (const c of this.chunks.values()) c.stale = true;
     w.dirtyList.length = 0;
     w.dirty.fill(0);
     w.allDirty = false;
+    this.odirty = true;
     this.flush();
   }
 
@@ -59,19 +74,28 @@ export class TerrainTex {
     const w = this.g.world;
     if (w.allDirty) { this.redrawAll(); return; }
     const list = w.dirtyList;
-    const n = Math.min(list.length, 6000);
+    const n = Math.min(list.length, 20000);
+    const W = w.w;
     for (let k = 0; k < n; k++) {
       const i = list[k];
       w.dirty[i] = 0;
-      this.drawTile(i);
+      this.overviewPixel(i);
+      const tx = i % W, ty = (i / W) | 0;
+      const c = this.chunks.get(((ty / CH) | 0) * this.cw + ((tx / CH) | 0));
+      if (c && !c.stale) this.drawTile(i, c);
     }
+    if (n) this.odirty = true;
     if (n === list.length) list.length = 0;
     else list.splice(0, n);
     this.flush();
   }
 
   private flush(): void {
-    for (const c of this.chunks) {
+    if (this.odirty) {
+      this.octx.putImageData(this.oimg, 0, 0);
+      this.odirty = false;
+    }
+    for (const c of this.chunks.values()) {
       if (c.dirty) {
         c.ctx.putImageData(c.img, 0, 0);
         c.dirty = false;
@@ -79,22 +103,125 @@ export class TerrainTex {
     }
   }
 
+  private chunk(key: number): Chunk {
+    let c = this.chunks.get(key);
+    if (c) return c;
+    if (this.chunks.size >= MAX_CHUNKS) {
+      // evict the least recently drawn chunk
+      let oldK = -1, oldU = Infinity;
+      for (const [k, v] of this.chunks) if (v.used < oldU) { oldU = v.used; oldK = k; }
+      const old = this.chunks.get(oldK)!;
+      this.chunks.delete(oldK);
+      this.pool.push(old);
+    }
+    c = this.pool.pop();
+    if (!c) {
+      const canvas = document.createElement('canvas');
+      canvas.width = CH * S;
+      canvas.height = CH * S;
+      const ctx = canvas.getContext('2d')!;
+      c = { canvas, ctx, img: ctx.createImageData(CH * S, CH * S), dirty: false, stale: true, used: 0 };
+    }
+    c.stale = true;
+    this.chunks.set(key, c);
+    return c;
+  }
+
+  private build(key: number, c: Chunk): void {
+    const w = this.g.world;
+    const cx = key % this.cw, cy = (key / this.cw) | 0;
+    const x1 = Math.min(w.w, (cx + 1) * CH), y1 = Math.min(w.h, (cy + 1) * CH);
+    for (let y = cy * CH; y < y1; y++) for (let x = cx * CH; x < x1; x++) this.drawTile(y * w.w + x, c);
+    c.stale = false;
+    c.ctx.putImageData(c.img, 0, 0);
+    c.dirty = false;
+  }
+
   draw(ctx: CanvasRenderingContext2D, camX: number, camY: number, zoom: number, vw: number, vh: number): void {
     const w = this.g.world;
+    this.frame++;
+    const ox = vw / 2 - camX * zoom, oy = vh / 2 - camY * zoom;
+    if (zoom < DETAIL_ZOOM) {
+      ctx.drawImage(this.overview, 0, 0, w.w, w.h, Math.floor(ox), Math.floor(oy), Math.ceil(w.w * zoom), Math.ceil(w.h * zoom));
+      return;
+    }
     const x0 = Math.max(0, Math.floor((camX - vw / 2 / zoom) / CH));
     const x1 = Math.min(this.cw - 1, Math.floor((camX + vw / 2 / zoom) / CH));
     const y0 = Math.max(0, Math.floor((camY - vh / 2 / zoom) / CH));
     const y1 = Math.min(this.ch - 1, Math.floor((camY + vh / 2 / zoom) / CH));
+    let built = 0;
     for (let cy = y0; cy <= y1; cy++) {
       for (let cx = x0; cx <= x1; cx++) {
-        const c = this.chunks[cy * this.cw + cx];
-        const sx = (cx * CH - camX) * zoom + vw / 2;
-        const sy = (cy * CH - camY) * zoom + vh / 2;
+        const key = cy * this.cw + cx;
         const tw = Math.min(CH, w.w - cx * CH), th = Math.min(CH, w.h - cy * CH);
-        // overlap by a hair to avoid seams
-        ctx.drawImage(c.canvas, 0, 0, tw * S, th * S, Math.floor(sx), Math.floor(sy), Math.ceil(tw * zoom) + 1, Math.ceil(th * zoom) + 1);
+        const sx = Math.floor(ox + cx * CH * zoom), sy = Math.floor(oy + cy * CH * zoom);
+        const dw = Math.ceil(tw * zoom) + 1, dh = Math.ceil(th * zoom) + 1;
+        let c = this.chunks.get(key);
+        if (!c || c.stale) {
+          // build a few chunks per frame; show the overview in the meantime
+          if (built < 10) { c = this.chunk(key); this.build(key, c); built++; }
+          else { ctx.drawImage(this.overview, cx * CH, cy * CH, tw, th, sx, sy, dw, dh); continue; }
+        }
+        c.used = this.frame;
+        ctx.drawImage(c.canvas, 0, 0, tw * S, th * S, sx, sy, dw, dh);
       }
     }
+  }
+
+  /** One averaged colour per tile for the overview / minimap. */
+  private overviewPixel(i: number): void {
+    const g = this.g;
+    const w = g.world;
+    const t = w.ter[i];
+    let base = TER[t].color;
+    let r = base[0], gg = base[1], b = base[2];
+    if (t === T.HILLS || t === T.MOUNTAIN) {
+      const bc = TER[w.biome[i]].color;
+      const k = t === T.HILLS ? 0.45 : 0.18;
+      r = r * (1 - k) + bc[0] * k; gg = gg * (1 - k) + bc[1] * k; b = b * (1 - k) + bc[2] * k;
+    }
+    const f = w.flora[i];
+    if (f === F.CROP) { const fs = w.fstate[i]; r = fs >= 200 ? 200 : 130; gg = fs >= 200 ? 175 : 140; b = 60; }
+    else if (f && f !== F.FLOWER) { r *= 0.68; gg *= 0.82; b *= 0.68; }
+    if (w.bld[i]) { r = 175; gg = 160; b = 150; }
+    const poll = w.poll[i];
+    const mode = this.mode;
+    const o = w.owner[i];
+    const city = o ? g.cityById.get(o) : null;
+    if (mode === 'pollution') {
+      const k = Math.min(1, poll / 200);
+      const gray = (r + gg + b) / 3;
+      r = gray * 0.5 + 255 * k * 0.7; gg = gray * 0.5 + 60 * (1 - k); b = gray * 0.5 + 40;
+    } else if (mode === 'eras') {
+      const gray = ((r + gg + b) / 3) * 0.6;
+      if (city) { const ec = ERAS[city.kingdom.era].color; r = gray * 0.4 + ec[0] * 0.75; gg = gray * 0.4 + ec[1] * 0.75; b = gray * 0.4 + ec[2] * 0.75; }
+      else if (t <= 2) { r *= 0.55; gg *= 0.6; b *= 0.75; }
+      else { r = gray; gg = gray; b = gray; }
+    } else {
+      if (poll > 40 && t > 2) { const k = Math.min(0.5, (poll - 40) / 400); r = r * (1 - k) + 90 * k; gg = gg * (1 - k) + 80 * k; b = b * (1 - k) + 60 * k; }
+      if (city) {
+        const kc = city.kingdom.color;
+        // kingdom borders show as a solid outline at overview scale
+        const W = w.w, x = i % W, y = (i / W) | 0;
+        let edge = false;
+        if (x > 0 && w.owner[i - 1] !== o && this.otherKingdom(i - 1, city.kingdom)) edge = true;
+        else if (x < W - 1 && w.owner[i + 1] !== o && this.otherKingdom(i + 1, city.kingdom)) edge = true;
+        else if (y > 0 && w.owner[i - W] !== o && this.otherKingdom(i - W, city.kingdom)) edge = true;
+        else if (y < w.h - 1 && w.owner[i + W] !== o && this.otherKingdom(i + W, city.kingdom)) edge = true;
+        const a = edge ? 0.9 : mode === 'political' ? 0.55 : 0.2;
+        r = r * (1 - a) + kc[0] * a; gg = gg * (1 - a) + kc[1] * a; b = b * (1 - a) + kc[2] * a;
+      }
+    }
+    const d = this.oimg.data;
+    const p = i * 4;
+    d[p] = r; d[p + 1] = gg; d[p + 2] = b; d[p + 3] = 255;
+  }
+
+  private otherKingdom(j: number, k: object): boolean {
+    const o = this.g.world.owner[j];
+    if (!o) return true;
+    const c = this.g.cityById.get(o);
+    return !c || c.kingdom !== k;
   }
 
   private ownerKingdomColor(i: number): [number, number, number] | null {
@@ -104,11 +231,10 @@ export class TerrainTex {
     return c ? c.kingdom.color : null;
   }
 
-  drawTile(i: number): void {
+  drawTile(i: number, ch: Chunk): void {
     const g = this.g;
     const w = g.world;
     const tx = i % w.w, ty = (i / w.w) | 0;
-    const ch = this.chunks[((ty / CH) | 0) * this.cw + ((tx / CH) | 0)];
     ch.dirty = true;
     const data = ch.img.data;
     const stride = CH * S * 4;
@@ -178,14 +304,23 @@ export class TerrainTex {
           case T.ROAD: case T.PAVED: {
             n *= 0.35;
             // which sides continue the street?
-            const rdN = nN === T.ROAD || nN === T.PAVED || nN === T.RAIL, rdS = nS === T.ROAD || nS === T.PAVED || nS === T.RAIL;
-            const rdW = nW === T.ROAD || nW === T.PAVED || nW === T.RAIL, rdE = nE === T.ROAD || nE === T.PAVED || nE === T.RAIL;
+            const rdN = isRoad(nN), rdS = isRoad(nS), rdW = isRoad(nW), rdE = isRoad(nE);
             const curb = (py === 0 && !rdN) || (py === S - 1 && !rdS) || (px === 0 && !rdW) || (px === S - 1 && !rdE);
             if (t === T.PAVED) {
               if (curb) { r = 150; gg = 150; b = 150; }
               else if (rdW && rdE && !rdN && !rdS && (py === 1 || py === 2) && py === 1 && px >= 1 && px <= 2 && ((tx & 1) === 0)) { r = 220; gg = 200; b = 110; }
               else if (rdN && rdS && !rdW && !rdE && px === 1 && py >= 1 && py <= 2 && ((ty & 1) === 0)) { r = 220; gg = 200; b = 110; }
             } else if (curb) { r -= 16; gg -= 16; b -= 12; }
+            break;
+          }
+          case T.HIGHWAY: {
+            n *= 0.25;
+            const hN = nN === T.HIGHWAY, hS = nS === T.HIGHWAY, hW = nW === T.HIGHWAY, hE = nE === T.HIGHWAY;
+            const curb = (py === 0 && !isRoad(nN)) || (py === S - 1 && !isRoad(nS)) || (px === 0 && !isRoad(nW)) || (px === S - 1 && !isRoad(nE));
+            const horiz = (hW || hE) && !(hN && hS && !hW);
+            if (curb) { r = 214; gg = 196; b = 96; }
+            else if (horiz && hN && py === 0 && (px & 1)) { r = 235; gg = 235; b = 235; }
+            else if (!horiz && hW && px === 0 && (py & 1)) { r = 235; gg = 235; b = 235; }
             break;
           }
           case T.RAIL: {

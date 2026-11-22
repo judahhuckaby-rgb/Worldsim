@@ -11,7 +11,8 @@ Runs on **Windows** (Electron) and **Android** (APK, Capacitor), from one TypeSc
 
 **World**
 - **Earth map**: real coastlines (Natural Earth, public domain), major mountain ranges, deserts and climate zones
-- Procedural worlds: continents, pangaea, archipelago, lakelands, highlands, empty ocean; sizes up to 704×480 tiles
+- Procedural worlds: continents, pangaea, archipelago, lakelands, highlands, empty ocean; sizes up to 1280×880 tiles
+- Level-of-detail rendering keeps memory bounded on huge worlds; peoples start spread over every landmass
 - 21 terrain types and 7 biomes, forests that spread, crops that ripen, deposits of ore, gold, coal, oil and uranium
 - Terrain tools: raise/lower land, paint every biome, lava, forests, flowers, clearing
 
@@ -23,13 +24,15 @@ Runs on **Windows** (Electron) and **Android** (APK, Capacitor), from one TypeSc
 **Civilization**
 - Villages gather, farm, chop, mine, build, and grow into towns, cities and metropolises with borders
 - Realistic demographics: high mortality and slow growth early, population booms after medicine and sanitation
-- Cities lay out street grids and city blocks; nations build intercity roads, railways and paved highways tile by tile
+- Cities lay out street grids and city blocks; nations build intercity roads, railways and two-lane motorways tile by tile
+- Traffic: carts, cars, trucks, buses and hovercars on the roads; steam, diesel and maglev trains on the railways
 - Settlers found new cities; ships carry colonists and armies across the sea
 - Governments evolve with the era: Tribe → Chiefdom → Kingdom → Empire → Republic → Federation → Star Union
 
 **Nations & world politics**
 - Every nation has its own flag; zoomed out, the map reads like a political world map
 - Trade agreements (with trade roads and gold), non-aggression pacts, alliances, border incidents, rivalries, rebellions
+- Overstretched nations split apart — civil wars or peaceful dissolutions (\"North X\" / \"South X\"); seafaring nations colonize other continents
 - Wars keep score; named peace treaties make the loser cede cities and pay reparations
 - A World Council forms in the Modern Age, admits nations and brokers peace
 - Nuclear powers test bombs, build arsenals and are deterred from attacking each other; desperate nations may strike first and be answered in kind
@@ -51,6 +54,10 @@ Runs on **Windows** (Electron) and **Android** (APK, Capacitor), from one TypeSc
 - Rain, lightning, fire, meteors, meteor showers, earthquakes, tornadoes, volcanoes, blizzards, droughts, acid rain, plague, alien invasions
 - Bless, curse, heal, madness, divine smite, nuke, erase, purify, cool the climate
 - Force wars and peace, friendship, rebellions, bounties
+
+**Updates**
+- The app checks GitHub Releases: Android downloads the new APK and opens the installer; the Windows installer
+  version updates itself in the background; the portable exe and browser show a download link
 
 **Interface**
 - Inspector for people, buildings, cities and kingdoms; tech-tree viewer; history log; statistics with charts

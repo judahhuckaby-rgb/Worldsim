@@ -6,6 +6,7 @@ import { UK, UDEF, ADULT_AGE, TPY, SOLDIERS, JOB } from '../sim/defs';
 import { T } from '../sim/terrain';
 import { TerrainTex, MapMode } from './terrainTex';
 import { flagCanvas } from './flags';
+import { Traffic } from './traffic';
 import { personSprite, creatureSprite, shipSprite, planeSprite, buildingSprite, buildingExtraHeight, glowSprite, RGB } from './sprites';
 
 export interface Camera { x: number; y: number; zoom: number; }
@@ -55,6 +56,8 @@ export class Renderer {
   showNames = true;
   darkness = 0;
   quality = 1;
+  traffic = new Traffic();
+  simSpeed = 1;
   private drawList: (Unit | Building)[] = [];
 
   constructor(canvas: HTMLCanvasElement, g: Game) {
@@ -73,6 +76,7 @@ export class Renderer {
     this.tex = new TerrainTex(g);
     this.tex.setMode(mode);
     this.fx = [];
+    this.traffic.reset();
     this.selUnit = null;
     this.selCity = null;
     this.selKingdom = null;
@@ -183,11 +187,15 @@ export class Renderer {
     const art = z / ART;
 
     this.drawTileAnims(ctx, ox, oy, z, vx0, vx1, vy0, vy1);
+    this.traffic.update(g, dt, this.simSpeed, vx0, vy0, vx1, vy1, z / this.dpr);
+    this.traffic.draw(ctx, ox, oy, z);
 
-    // ---- entities (depth sorted)
+    // ---- entities (depth sorted). Far out, the terrain overview already shows towns, so skip sprites.
+    const far = z < 3.2;
     const list = this.drawList;
     list.length = 0;
     for (const b of g.buildings) {
+      if (far) break;
       if (b.dead) continue;
       if (b.x + b.w < vx0 || b.x > vx1 || b.y + b.h < vy0 || b.y - 8 > vy1) continue;
       list.push(b);
@@ -195,6 +203,7 @@ export class Renderer {
     const flyers: Unit[] = [];
     for (const u of g.units) {
       if (u.dead || u.inBoat) continue;
+      if (far && u.kind === UK.PERSON) continue;
       if (u.x < vx0 || u.x > vx1 || u.y < vy0 || u.y > vy1 + 4) continue;
       if (UDEF[u.kind].flying) flyers.push(u);
       else list.push(u);
@@ -228,7 +237,10 @@ export class Renderer {
     const phase = (this.time % dayLen) / dayLen;
     const dark = g.laws.dayNight ? Math.max(0, Math.cos(phase * Math.PI * 2) * -1) : 0;
     this.darkness = dark * 0.62;
-    if (this.darkness > 0.02) this.drawNight(ctx, ox, oy, z, art, vx0, vx1, vy0, vy1);
+    if (this.darkness > 0.02) {
+      if (far) { ctx.fillStyle = `rgba(8,12,40,${this.darkness * 0.8})`; ctx.fillRect(0, 0, vw, vh); }
+      else this.drawNight(ctx, ox, oy, z, art, vx0, vx1, vy0, vy1);
+    }
 
     if (this.showNames) this.drawLabels(ctx, ox, oy, z);
     this.drawSelection(ctx, ox, oy, z, art);
@@ -612,6 +624,8 @@ export class Renderer {
       ctx.globalAlpha = Math.min(1, d * 1.4) * flick * (lights === 1 ? 0.7 : 0.55);
       ctx.drawImage(img, ox + b.cx * z - size / 2, oy + (b.y + b.h - hgt * 0.45) * z - size / 2, size, size);
     }
+    ctx.globalAlpha = Math.min(1, d * 1.6) * 0.7;
+    this.traffic.drawLights(ctx, ox, oy, z, glowSprite('rgba(255,244,200,0.9)'));
     const w = this.g.world;
     ctx.globalAlpha = Math.min(1, d * 1.5) * 0.8;
     for (const i of w.burning) {
@@ -635,8 +649,10 @@ export class Renderer {
     ctx.textBaseline = 'middle';
     const seed = this.g.seed;
     if (z < 3.2 * this.dpr) {
-      // zoomed out: label nations like a world map
-      for (const k of this.g.kingdoms) {
+      // zoomed out: label nations like a world map (largest first, skip overlapping labels)
+      const placed: number[][] = [];
+      const order = this.g.kingdoms.slice().sort((a, b) => b.pop - a.pop);
+      for (const k of order) {
         let sx = 0, sy = 0, wsum = 0;
         for (const c of k.cities) { const wgt = c.members.length + 1; sx += c.x * wgt; sy += c.y * wgt; wsum += wgt; }
         if (!wsum) continue;
@@ -648,8 +664,11 @@ export class Renderer {
         const label = this.g.kName(k);
         const fw = fs * 1.35, fh = fs * 0.9;
         const tw = ctx.measureText(label).width;
+        const rx = sx - tw / 2 - fw - fs * 0.6, ry = sy - fs * 0.75, rw = tw + fw + fs * 1.1, rh = fs * 1.5;
+        if (placed.some(p => rx < p[0] + p[2] && rx + rw > p[0] && ry < p[1] + p[3] && ry + rh > p[1])) continue;
+        placed.push([rx, ry, rw, rh]);
         ctx.fillStyle = 'rgba(10,14,24,0.55)';
-        roundRect(ctx, sx - tw / 2 - fw - fs * 0.6, sy - fs * 0.75, tw + fw + fs * 1.1, fs * 1.5, fs * 0.4);
+        roundRect(ctx, rx, ry, rw, rh, fs * 0.4);
         ctx.fill();
         ctx.drawImage(flagCanvas(k, seed), sx - tw / 2 - fw - fs * 0.3, sy - fh / 2, fw, fh);
         ctx.fillStyle = '#fff';
@@ -659,7 +678,9 @@ export class Renderer {
     }
     const fs = Math.round(Math.max(10, Math.min(15, z * 1.2)) * this.dpr * 0.9);
     ctx.font = `700 ${fs}px system-ui, -apple-system, Segoe UI, Roboto, sans-serif`;
-    for (const c of this.g.cities) {
+    const placedC: number[][] = [];
+    const cities = this.g.cities.slice().sort((a, b) => (b.kingdom.capital === b ? 1000 : 0) + b.members.length - (a.kingdom.capital === a ? 1000 : 0) - a.members.length);
+    for (const c of cities) {
       const sx = ox + c.x * z;
       const sy = oy + (c.y - 3.2) * z - 26 * this.dpr * Math.min(1, z / 10);
       if (sx < -100 || sx > this.vw + 100 || sy < -40 || sy > this.vh + 40) continue;
@@ -667,8 +688,11 @@ export class Renderer {
       const label = `${cap ? '★ ' : ''}${c.name} ${c.members.length}`;
       const fw = fs * 1.2, fh = fs * 0.8;
       const tw = ctx.measureText(label).width + fw + fs * 0.9;
+      const rx = sx - tw / 2, ry = sy - fs * 0.75, rh = fs * 1.5;
+      if (placedC.some(p => rx < p[0] + p[2] && rx + tw > p[0] && ry < p[1] + p[3] && ry + rh > p[1])) continue;
+      placedC.push([rx, ry, tw, rh]);
       ctx.fillStyle = 'rgba(10,14,24,0.72)';
-      roundRect(ctx, sx - tw / 2, sy - fs * 0.75, tw, fs * 1.5, fs * 0.4);
+      roundRect(ctx, rx, ry, tw, rh, fs * 0.4);
       ctx.fill();
       ctx.drawImage(flagCanvas(c.kingdom, seed), sx - tw / 2 + fs * 0.3, sy - fh / 2, fw, fh);
       ctx.fillStyle = '#fff';

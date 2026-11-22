@@ -12,6 +12,7 @@ import { personSprite, creatureSprite, buildingSprite, iconURL, css } from '../r
 import { MAP_TYPES, MapType } from '../sim/worldgen';
 import { listSlots, SlotMeta } from '../sim/save';
 import { flagImg } from '../render/flags';
+import { APP_VERSION } from '../update';
 import { doomsday, nuclearPowers, nukeBanned, climateSigned, accord } from '../sim/politics';
 
 export interface NewWorldOpts { w: number; h: number; type: MapType; seed: number; civs: number; animals: boolean; startEra: number; }
@@ -34,8 +35,10 @@ export interface AppLike {
 }
 
 const SPEEDS = [1, 2, 5, 10, 20];
+const MAJOR_KINDS = new Set(['nuke', 'ascend', 'space', 'eraFirst', 'treaty', 'disaster', 'update', 'split']);
 export const WORLD_SIZES = [
   { name: 'Small', w: 256, h: 176 }, { name: 'Medium', w: 384, h: 256 }, { name: 'Large', w: 512, h: 352 }, { name: 'Huge', w: 704, h: 480 },
+  { name: 'Giant', w: 960, h: 656 }, { name: 'Colossal', w: 1280, h: 880 },
 ];
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls = '', html = ''): HTMLElementTagNameMap[K] {
@@ -78,9 +81,10 @@ export class UI {
   cat = 'terrain';
   modeBtn!: HTMLButtonElement;
   lastToast = 0;
-  defaultSize = 2;
+  defaultSize = 3;
   iconCache = new Map<string, string>();
   canQuit = false;
+  onCheckUpdates: () => void = () => {};
   onQuit: () => void = () => {};
 
   constructor(app: AppLike, root: HTMLElement) {
@@ -300,44 +304,31 @@ export class UI {
 
   updateMinimap(now: number): void {
     if (!this.app.showMinimap) return;
+    if (now - this.mmT < 250) return;
+    this.mmT = now;
     const g = this.app.game;
     const w = g.world;
     const mm = this.minimap;
-    const maxW = Math.min(200, window.innerWidth * 0.28);
-    const scale = Math.max(0.3, Math.min(1, maxW / w.w));
+    const maxW = Math.min(220, window.innerWidth * 0.28);
+    const scale = maxW / w.w;
     const cw = Math.round(w.w * scale), ch = Math.round(w.h * scale);
-    if (mm.width !== w.w || mm.height !== w.h) {
-      mm.width = w.w;
-      mm.height = w.h;
-      this.mmImg = null;
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    if (mm.width !== Math.round(cw * dpr) || mm.height !== Math.round(ch * dpr)) {
+      mm.width = Math.round(cw * dpr);
+      mm.height = Math.round(ch * dpr);
     }
     mm.style.width = cw + 'px';
     mm.style.height = ch + 'px';
     const ctx = mm.getContext('2d')!;
-    if (!this.mmImg || now - this.mmT > 1200) {
-      this.mmT = now;
-      const img = this.mmImg || ctx.createImageData(w.w, w.h);
-      const d = img.data;
-      for (let i = 0; i < w.n; i++) {
-        const t = w.ter[i];
-        let c = TER[t].color;
-        const o = w.owner[i];
-        let r = c[0], gg = c[1], b = c[2];
-        if (w.flora[i] && w.flora[i] !== 8 && t !== T.FARM) { r *= 0.7; gg *= 0.8; b *= 0.7; }
-        if (o) {
-          const city = g.cityById.get(o);
-          if (city) { const kc = city.kingdom.color; r = r * 0.45 + kc[0] * 0.55; gg = gg * 0.45 + kc[1] * 0.55; b = b * 0.45 + kc[2] * 0.55; }
-        }
-        d[i * 4] = r; d[i * 4 + 1] = gg; d[i * 4 + 2] = b; d[i * 4 + 3] = 255;
-      }
-      this.mmImg = img;
-    }
-    ctx.putImageData(this.mmImg, 0, 0);
+    ctx.imageSmoothingEnabled = true;
+    // the terrain overview is kept current by the renderer; just scale it down
+    ctx.drawImage(this.app.renderer.tex.overview, 0, 0, mm.width, mm.height);
     const R = this.app.renderer;
+    const k = mm.width / w.w;
     const vw = R.vw / R.cam.zoom, vh = R.vh / R.cam.zoom;
     ctx.strokeStyle = '#fff';
-    ctx.lineWidth = Math.max(1, w.w / cw);
-    ctx.strokeRect(R.cam.x - vw / 2, R.cam.y - vh / 2, vw, vh);
+    ctx.lineWidth = Math.max(1, dpr);
+    ctx.strokeRect((R.cam.x - vw / 2) * k, (R.cam.y - vh / 2) * k, vw * k, vh * k);
   }
 
   bindMinimap(): void {
@@ -361,14 +352,34 @@ export class UI {
     this.showToast({ year: this.app.game.year, text: msg, kind: 'info', x: -1, y: -1, color: '#ffcf4a' });
   }
 
+  /** 'major' = only world-changing events, 'all' = every headline, 'off' = none (history still records everything). */
+  get notifyLevel(): string {
+    try { return localStorage.getItem('ws.notify') || 'major'; } catch { return 'major'; }
+  }
+  set notifyLevel(v: string) {
+    try { localStorage.setItem('ws.notify', v); } catch { /* ignore */ }
+  }
+
   showToast(e: HistoryEntry): void {
+    const level = this.notifyLevel;
+    if (e.kind !== 'info') {
+      if (level === 'off') return;
+      if (level === 'major' && !MAJOR_KINDS.has(e.kind)) return;
+    }
+    const compact = window.innerHeight < 560 || window.innerWidth < 720;
     const t = el('div', 'toast', esc(e.text));
     t.style.borderLeftColor = e.color;
-    if (e.x >= 0) t.onclick = () => this.app.renderer.centerOn(e.x, e.y, Math.max(8, this.app.renderer.cam.zoom / this.app.renderer.dpr));
+    t.title = 'Tap to dismiss' + (e.x >= 0 ? ' and go there' : '');
+    t.onclick = () => {
+      if (e.x >= 0) this.app.renderer.centerOn(e.x, e.y, Math.max(8, this.app.renderer.cam.zoom / this.app.renderer.dpr));
+      t.remove();
+    };
     this.toasts.prepend(t);
-    while (this.toasts.children.length > 4) this.toasts.lastElementChild!.remove();
-    setTimeout(() => t.classList.add('out'), 4500);
-    setTimeout(() => t.remove(), 5000);
+    const max = compact ? 2 : 3;
+    while (this.toasts.children.length > max) this.toasts.lastElementChild!.remove();
+    const life = compact ? 3200 : 4200;
+    setTimeout(() => t.classList.add('out'), life);
+    setTimeout(() => t.remove(), life + 400);
   }
 
   // ------------------------------------------------------------------ inspector
@@ -736,7 +747,10 @@ export class UI {
         <button class="btn" id="mSave">💾 Save world</button>
         <button class="btn" id="mLoad">📂 Load world</button>
         <button class="btn" id="mLaws">⚖️ World laws</button>
+        <div class="law" style="border:none;padding:4px 0"><div><b>Notifications</b><div class="d">Pop-up headlines (everything is always kept in 📜 History)</div></div>
+          <div class="seg" id="mNotify">${[['major', 'Major'], ['all', 'All'], ['off', 'Off']].map(([v, n]) => `<button data-v="${v}" class="${this.notifyLevel === v ? 'on' : ''}">${n}</button>`).join('')}</div></div>
         <button class="btn" id="mHelp">❓ How to play</button>
+        <button class="btn" id="mUpd">🔄 Check for updates <span class="sub">· v${APP_VERSION}</span></button>
         <button class="btn" id="mClose">▶ Resume</button>
         ${this.canQuit ? '<button class="btn danger" id="mQuit">⏻ Save & quit</button>' : ''}
       </div>`);
@@ -746,7 +760,13 @@ export class UI {
     q('mLoad').onclick = () => this.openSlots('load');
     q('mLaws').onclick = () => this.openLaws();
     q('mHelp').onclick = () => this.openHelp();
+    q('mUpd').onclick = () => this.onCheckUpdates();
     q('mClose').onclick = () => this.closeModal();
+    this.modal.querySelectorAll<HTMLElement>('#mNotify button').forEach(b => b.onclick = () => {
+      this.notifyLevel = b.dataset.v!;
+      this.modal.querySelectorAll('#mNotify button').forEach(x => x.classList.toggle('on', x === b));
+      if (b.dataset.v === 'off') this.toasts.innerHTML = '';
+    });
     const quit = this.modal.querySelector('#mQuit') as HTMLElement | null;
     if (quit) quit.onclick = () => this.onQuit();
   }
@@ -775,7 +795,7 @@ export class UI {
         <div>Seed</div><input type="number" id="nwSeed" value="${o.seed}">
       </div>
       <div class="btns"><button class="btn primary" id="nwGo">Create world</button><button class="btn" id="nwBack">Cancel</button></div>
-      <div class="sub" style="margin-top:8px">🌍 Earth uses real coastlines, mountain ranges and climate zones (Natural Earth data). Bigger worlds hold more nations and people. Huge worlds are demanding on phones — the population limit adapts to the size (change it in World laws).</div>`);
+      <div class="sub" style="margin-top:8px">🌍 Earth uses real coastlines, mountain ranges and climate zones (Natural Earth data). Bigger worlds hold more nations and people. Giant and Colossal worlds are demanding, especially on phones — the population limit adapts to the size (change it in World laws).</div>`);
     const m = this.modal;
     const bindSeg = (id: string, fn: (i: number) => void) => {
       const host = m.querySelector('#' + id)!;
@@ -897,8 +917,8 @@ export class UI {
   openHistory(): void {
     let filter = 'all';
     const groups: Record<string, string[]> = {
-      war: ['war', 'peace', 'conquest', 'fall', 'revolt', 'ally', 'nuke', 'treaty'],
-      tech: ['era', 'tech', 'space', 'ascend', 'building', 'infra'],
+      war: ['war', 'peace', 'conquest', 'fall', 'revolt', 'ally', 'nuke', 'treaty', 'split'],
+      tech: ['era', 'eraFirst', 'tech', 'space', 'ascend', 'building', 'infra'],
       world: ['disaster', 'monster', 'ruin', 'colony'],
       realm: ['kingdom', 'city', 'king', 'hero'],
     };
@@ -983,7 +1003,7 @@ export class UI {
     const rows = toggles.map(([k, n, d]) => `<div class="law"><div><b>${n}</b><div class="d">${d}</div></div><div class="switch ${L[k] ? 'on' : ''}" data-law="${String(k)}"></div></div>`).join('');
     this.openModal(`<h1>⚖️ World laws</h1>${rows}
       <div class="law"><div><b>Research speed</b><div class="d">Multiplier on all research</div></div><div class="seg" id="lawRs">${[0.5, 1, 2, 4].map(v => `<button data-v="${v}" class="${L.researchSpeed === v ? 'on' : ''}">${v}×</button>`).join('')}</div></div>
-      <div class="law" style="flex-wrap:wrap"><div><b>Population limit</b><div class="d">Lower this on slower devices</div></div><div class="seg" id="lawPop">${[1000, 2000, 3500, 5000, 7500, 10000].map(v => `<button data-v="${v}" class="${L.maxPop === v ? 'on' : ''}">${v}</button>`).join('')}</div></div>`);
+      <div class="law" style="flex-wrap:wrap"><div><b>Population limit</b><div class="d">Lower this on slower devices</div></div><div class="seg" id="lawPop">${[1000, 2000, 3500, 5000, 7500, 10000, 14000].map(v => `<button data-v="${v}" class="${L.maxPop === v ? 'on' : ''}">${v}</button>`).join('')}</div></div>`);
     this.modal.querySelectorAll<HTMLElement>('[data-law]').forEach(s => s.onclick = () => {
       const k = s.dataset.law as keyof typeof L;
       (L as any)[k] = !(L as any)[k];

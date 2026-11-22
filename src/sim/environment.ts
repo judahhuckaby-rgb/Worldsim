@@ -6,7 +6,7 @@ export function environmentTick(g: Game): void {
   updateFire(g);
   updateLava(g);
   const w = g.world;
-  const samples = Math.max(120, (w.n / 160) | 0);
+  const samples = Math.min(3500, Math.max(120, (w.n / 160) | 0));
   const rng = g.rng;
   for (let s = 0; s < samples; s++) tileTick(g, (rng.next() * w.n) | 0);
 }
@@ -176,7 +176,7 @@ function tileTick(g: Game, i: number): void {
   if (f === F.DEAD) { if (rng.next() < 0.03) w.setFlora(i, F.NONE); return; }
   if (f === F.FLOWER) { if (rng.next() < 0.02) w.setFlora(i, F.NONE); return; }
   if (f === F.NONE) {
-    if (w.bld[i] || t === T.ROAD || t === T.PAVED || t === T.RAIL || t === T.LAVA || t === T.WASTE || t === T.ICE || t <= 2 || t === T.MOUNTAIN || t === T.PEAK) return;
+    if (w.bld[i] || t === T.ROAD || t === T.PAVED || t === T.RAIL || t === T.HIGHWAY || t === T.LAVA || t === T.WASTE || t === T.ICE || t <= 2 || t === T.MOUNTAIN || t === T.PEAK) return;
     const nt = treeFor(t);
     if (nt === F.NONE) return;
     const W = w.w, x = i % W, y = (i / W) | 0;

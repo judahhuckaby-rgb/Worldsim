@@ -8,6 +8,7 @@ import { UI, AppLike, NewWorldOpts, WORLD_SIZES } from './ui/ui';
 import { Input } from './ui/input';
 import { Tool, ToolCtx } from './ui/tools';
 import { saveSlot, loadSlot, listSlots } from './sim/save';
+import { UpdateUI } from './ui/updateUI';
 import { App as CapApp } from '@capacitor/app';
 import { Capacitor } from '@capacitor/core';
 
@@ -29,16 +30,20 @@ class App implements AppLike {
   uiT = 0;
   autosaveT = 0;
   simMs = 0;
+  updater!: UpdateUI;
 
   constructor() {
     const canvas = document.getElementById('view') as HTMLCanvasElement;
     const root = document.getElementById('ui')!;
-    const size = WORLD_SIZES[isMobile ? 1 : 2];
+    const size = WORLD_SIZES[isMobile ? 2 : 3];
     this.game = App.makeGame({ w: size.w, h: size.h, type: 'continents', seed: Math.floor(Math.random() * 1e9), civs: 8, animals: true, startEra: 0 });
     this.renderer = new Renderer(canvas, this.game);
     this.toolCtx = { toast: (m: string) => this.ui.toast(m), pickKingdom: { first: null } };
     this.ui = new UI(this, root);
-    this.ui.defaultSize = isMobile ? 1 : 2;
+    this.ui.defaultSize = isMobile ? 2 : 3;
+    this.updater = new UpdateUI(this.ui, root, () => this.save('auto'));
+    this.ui.onCheckUpdates = () => this.updater.openDialog(true);
+    this.updater.start();
     this.input = new Input(this, this.ui, canvas);
     this.ui.minimap.classList.toggle('hidden', !this.showMinimap);
     window.addEventListener('resize', () => { this.renderer.resize(); this.renderer.clampCam(); });
@@ -135,6 +140,7 @@ class App implements AppLike {
     const dt = Math.min(0.1, (now - this.last) / 1000);
     this.last = now;
     this.input.pan(dt);
+    this.renderer.simSpeed = this.paused ? 0 : this.speed;
     this.input.tick(now);
     // fixed-step simulation, time-budgeted so slow devices degrade gracefully
     if (!this.paused) {

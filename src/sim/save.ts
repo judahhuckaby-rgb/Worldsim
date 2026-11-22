@@ -248,6 +248,7 @@ export function deserialize(json: string): Game {
     k.pop = p;
   }
   for (const c of g.cities) c.capacity = g.cityCapacity(c);
+  g.worldEra = g.allKingdoms.reduce((m, k) => Math.max(m, k.era), 0);
   g.personPop = g.kindCount[UK.PERSON];
   world.allDirty = true;
   return g;

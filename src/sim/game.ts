@@ -34,7 +34,7 @@ export interface Laws {
 /** Population limit that suits a world of n tiles. */
 export function suggestedMaxPop(n: number, mobile = false): number {
   const v = Math.round((n / 38) * (mobile ? 0.8 : 1) / 250) * 250;
-  return Math.max(1500, Math.min(9000, v));
+  return Math.max(1500, Math.min(mobile ? 7000 : 11000, v));
 }
 
 export function defaultLaws(): Laws {
@@ -191,6 +191,7 @@ export class Game {
   nukeFreeAnnounced = false;
   treaties = 0;
   lastTopo = -9999;
+  worldEra = 0;
 
   constructor(world: World, seed: number) {
     this.world = world;
@@ -575,11 +576,14 @@ export class Game {
     const x = cap ? cap.x : -1, y = cap ? cap.y : -1;
     if (k.era > oldEra) {
       k.eraYears[k.era] = this.year;
-      this.log(`${this.kName(k)} has entered the ${eraName(k.era)}!`, 'era', x, y, k.css, true);
+      if (k.era > this.worldEra) {
+        this.worldEra = k.era;
+        this.log(`🌍 ${this.kName(k)} is the first nation in the world to enter the ${eraName(k.era)}!`, 'eraFirst', x, y, k.css, true);
+      } else this.log(`${this.kName(k)} has entered the ${eraName(k.era)}`, 'era', x, y, k.css, true);
       if (cap) this.emit({ kind: 'fireworks', x: cap.x, y: cap.y - 2, color: k.css });
       for (const u of this.units) if (u.kingdom === k && u.kind === UK.PERSON) refreshStats(this, u);
     } else if (gift || td.era >= 5 || ['agriculture', 'writing', 'gunpowder', 'flight', 'nukes', 'computers', 'spaceflight'].includes(td.id)) {
-      this.log(`${this.kName(k)} discovered ${td.name}${gift ? ' (divine gift)' : ''}`, 'tech', x, y, k.css, gift || td.id === 'nukes' || td.id === 'spaceflight');
+      this.log(`${this.kName(k)} discovered ${td.name}${gift ? ' (divine gift)' : ''}`, 'tech', x, y, k.css, gift);
     }
     if (k.researching === idx) {
       k.researching = -1;
@@ -662,7 +666,7 @@ export class Game {
     for (let dy = 0; dy < def.h; dy++) for (let dx = 0; dx < def.w; dx++) {
       const i = (y + dy) * w.w + x + dx;
       w.bld[i] = b.id;
-      if (w.ter[i] === T.FARM || w.ter[i] === T.ROAD || w.ter[i] === T.PAVED || w.ter[i] === T.RAIL) {
+      if (w.ter[i] === T.FARM || w.ter[i] === T.ROAD || w.ter[i] === T.PAVED || w.ter[i] === T.RAIL || w.ter[i] === T.HIGHWAY) {
         w.setTer(i, w.landFor(i));
         const fi = c.farms.indexOf(i);
         if (fi >= 0) c.farms.splice(fi, 1);
@@ -902,14 +906,18 @@ export class Game {
     return c;
   }
 
-  findStartSpot(species: number): number {
+  findStartSpot(species: number, island = -1, box: number[] | null = null): number {
     const w = this.world;
     const pref = SPECIES[species].prefers;
     let best = -1, bs = -1e9;
-    for (let tries = 0; tries < 400; tries++) {
-      const x = 6 + this.rng.int(w.w - 12), y = 6 + this.rng.int(w.h - 12);
+    const bx0 = box ? Math.max(6, box[0]) : 6, by0 = box ? Math.max(6, box[1]) : 6;
+    const bx1 = box ? Math.min(w.w - 7, box[2]) : w.w - 7, by1 = box ? Math.min(w.h - 7, box[3]) : w.h - 7;
+    if (bx1 <= bx0 || by1 <= by0) return -1;
+    for (let tries = 0; tries < 500; tries++) {
+      const x = bx0 + this.rng.int(bx1 - bx0 + 1), y = by0 + this.rng.int(by1 - by0 + 1);
       const i = y * w.w + x;
       const t = w.ter[i];
+      if (island >= 0 && w.island[i] !== island) continue;
       if (!TER[t].build || w.owner[i] || w.isWater(i)) continue;
       let score = pref.includes(t) ? 20 : 0;
       let land = 0;
@@ -933,9 +941,35 @@ export class Game {
   populateWorld(numCivs: number, animals: boolean): void {
     const w = this.world;
     if (w.topoDirty) w.computeTopology();
+    // spread the first peoples over every sizeable landmass, in proportion to its area
+    const boxes = new Map<number, number[]>();
+    for (let i = 0; i < w.n; i++) {
+      const id = w.island[i];
+      if (id < 0 || w.ter[i] <= 2) continue;
+      const x = i % w.w, y = (i / w.w) | 0;
+      const b = boxes.get(id);
+      if (!b) boxes.set(id, [x, y, x, y]);
+      else { if (x < b[0]) b[0] = x; if (y < b[1]) b[1] = y; if (x > b[2]) b[2] = x; if (y > b[3]) b[3] = y; }
+    }
+    let land = 0;
+    for (const s of w.islandSize) land += s;
+    const big = Array.from(boxes.keys()).filter(id => w.islandSize[id] >= Math.max(600, land * 0.03)).sort((a, b) => w.islandSize[b] - w.islandSize[a]);
+    const plan: number[] = [];
+    if (big.length) {
+      for (let i = 0; i < Math.min(numCivs, big.length); i++) plan.push(big[i]);
+      while (plan.length < numCivs) {
+        // weighted by area among the big landmasses
+        let r = this.rng.next() * big.reduce((s, id) => s + w.islandSize[id], 0);
+        let pick = big[0];
+        for (const id of big) { r -= w.islandSize[id]; if (r <= 0) { pick = id; break; } }
+        plan.push(pick);
+      }
+    }
     for (let i = 0; i < numCivs; i++) {
       const sp = i % SPECIES.length;
-      const spot = this.findStartSpot(sp);
+      const isl = plan.length ? plan[i] : -1;
+      let spot = this.findStartSpot(sp, isl, isl >= 0 ? boxes.get(isl)! : null);
+      if (spot < 0) spot = this.findStartSpot(sp);
       if (spot >= 0) this.spawnTribe(sp, spot % w.w, (spot / w.w) | 0, 7);
     }
     if (animals) {

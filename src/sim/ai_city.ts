@@ -444,7 +444,7 @@ function buildRoad(g: Game, c: City, b: Building): void {
     if (W.bld[i] && W.bld[i] !== b.id) { if (W.bld[i] === c.center.id) return; }
     else if (!W.bld[i]) {
       const t = W.ter[i];
-      if (t !== T.ROAD && t !== T.PAVED && TER[t].build && t !== T.FARM) {
+      if (!isRoad(t) && TER[t].build && t !== T.FARM) {
         W.setTer(i, c.kingdom.caps.roads >= 2 ? T.PAVED : T.ROAD);
         W.setFlora(i, F.NONE);
       }

@@ -9,6 +9,7 @@ import { canResearch, NUM_TECH, TECHS } from '../sim/tech';
 import { rebel } from '../sim/ai_city';
 import { refreshStats } from '../sim/ai_units';
 import { Kingdom } from '../sim/entities';
+import { splitNation } from '../sim/politics';
 
 export type ToolMode = 'brush' | 'spray' | 'click';
 
@@ -269,6 +270,14 @@ export const TOOLS: Tool[] = [
       if (!c) { ctx.toast('Tap inside a city'); return; }
       if (c.kingdom.cities.length < 2) { ctx.toast('A kingdom needs at least two cities for a rebellion'); return; }
       rebel(g, c);
+    },
+  },
+  {
+    id: 'split', cat: 'civ', name: 'Split Nation', icon: '🗺️', mode: 'click', desc: 'Break a nation in two (civil war or peaceful split)', apply: (g, x, y, _r, ctx) => {
+      const k = kingdomAt(g, x, y);
+      if (!k) { ctx.toast('Tap inside a nation'); return; }
+      const nk = splitNation(g, k);
+      if (!nk) ctx.toast(`${g.kName(k)} is too small or compact to split (needs 6+ cities spread out)`);
     },
   },
   {
