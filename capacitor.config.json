@@ -1,0 +1,10 @@
+{
+  "appId": "com.worldsim.ages",
+  "appName": "WorldSim Ages",
+  "webDir": "dist",
+  "android": {
+    "backgroundColor": "#0d1424",
+    "allowMixedContent": false,
+    "webContentsDebuggingEnabled": false
+  }
+}

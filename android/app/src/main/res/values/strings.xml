@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">WorldSim Ages</string>
+    <string name="title_activity_main">WorldSim Ages</string>
+    <string name="package_name">com.worldsim.ages</string>
+    <string name="custom_url_scheme">com.worldsim.ages</string>
+</resources>

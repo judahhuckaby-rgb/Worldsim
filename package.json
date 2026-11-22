@@ -1,0 +1,61 @@
+{
+  "name": "worldsim-ages",
+  "version": "1.0.0",
+  "description": "WorldSim Ages - a god-simulation sandbox where civilizations research their way from the Stone Age to the Space Age",
+  "author": "WorldSim",
+  "license": "MIT",
+  "main": "electron/main.cjs",
+  "private": true,
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "typecheck": "tsc --noEmit",
+    "sim": "esbuild test/headless.ts --bundle --platform=node --outfile=.tmp/headless.cjs && node .tmp/headless.cjs",
+    "electron": "electron .",
+    "dist:win": "npm run build && electron-builder --win --x64 --publish never",
+    "android:sync": "npm run build && cap sync android",
+    "dist:android": "npm run android:sync && cd android && ./gradlew assembleDebug",
+    "dist:win-portable": "npm run build && electron-builder --win portable zip --x64 --publish never"
+  },
+  "build": {
+    "appId": "com.worldsim.ages",
+    "productName": "WorldSim Ages",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*"
+    ],
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ],
+      "icon": "build/icon.png",
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "artifactName": "WorldSim-Ages-Setup-${version}.${ext}"
+    },
+    "portable": {
+      "artifactName": "WorldSim-Ages-Portable-${version}.${ext}"
+    },
+    "afterPack": "scripts/after-pack.cjs"
+  },
+  "devDependencies": {
+    "@capacitor/android": "^6.2.0",
+    "@capacitor/app": "^6.0.2",
+    "@capacitor/cli": "^6.2.0",
+    "@capacitor/core": "^6.2.0",
+    "electron": "^33.2.1",
+    "electron-builder": "^25.1.8",
+    "esbuild": "^0.24.0",
+    "resedit": "^2.0.3",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.11"
+  }
+}
