@@ -52,7 +52,9 @@ jobs:
           path: WorldSim-Ages.apk
 
   release:
-    if: startsWith(github.ref, 'refs/tags/v')
+    # Publishes a GitHub Release with the installer, portable exe and APK on every
+    # push (and on v* tags). Pull requests only build artifacts.
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     needs: [windows, android]
     runs-on: ubuntu-latest
     permissions:
@@ -62,6 +64,26 @@ jobs:
         with:
           path: dist-artifacts
           merge-multiple: true
+      - name: Pick release tag
+        id: tag
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=v1.0.${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+          fi
       - uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: WorldSim Ages ${{ steps.tag.outputs.tag }}
+          make_latest: true
+          body: |
+            **Downloads**
+            - **WorldSim-Ages.apk** — Android. Open it on your phone and allow installing from unknown sources.
+            - **WorldSim-Ages-Setup-*.exe** — Windows installer (Start menu + desktop shortcut).
+            - **WorldSim-Ages-Portable-*.exe** — Windows, no install: just run it.
+
+            The Windows builds are unsigned, so SmartScreen may warn on first launch: click *More info* → *Run anyway*.
           files: dist-artifacts/*
