@@ -1,10 +1,10 @@
 // Entry point: app state, game loop, platform glue.
 import './ui/style.css';
-import { Game } from './sim/game';
+import { Game, suggestedMaxPop } from './sim/game';
 import { generateWorld } from './sim/worldgen';
 import { TPS } from './sim/defs';
 import { Renderer } from './render/renderer';
-import { UI, AppLike, NewWorldOpts } from './ui/ui';
+import { UI, AppLike, NewWorldOpts, WORLD_SIZES } from './ui/ui';
 import { Input } from './ui/input';
 import { Tool, ToolCtx } from './ui/tools';
 import { saveSlot, loadSlot, listSlots } from './sim/save';
@@ -33,10 +33,12 @@ class App implements AppLike {
   constructor() {
     const canvas = document.getElementById('view') as HTMLCanvasElement;
     const root = document.getElementById('ui')!;
-    this.game = App.makeGame({ w: isMobile ? 200 : 240, h: isMobile ? 130 : 160, type: 'continents', seed: Math.floor(Math.random() * 1e9), civs: 6, animals: true, startEra: 0 });
+    const size = WORLD_SIZES[isMobile ? 1 : 2];
+    this.game = App.makeGame({ w: size.w, h: size.h, type: 'continents', seed: Math.floor(Math.random() * 1e9), civs: 8, animals: true, startEra: 0 });
     this.renderer = new Renderer(canvas, this.game);
     this.toolCtx = { toast: (m: string) => this.ui.toast(m), pickKingdom: { first: null } };
     this.ui = new UI(this, root);
+    this.ui.defaultSize = isMobile ? 1 : 2;
     this.input = new Input(this, this.ui, canvas);
     this.ui.minimap.classList.toggle('hidden', !this.showMinimap);
     window.addEventListener('resize', () => { this.renderer.resize(); this.renderer.clampCam(); });
@@ -78,7 +80,7 @@ class App implements AppLike {
     const g = new Game(world, o.seed);
     g.mapType = o.type;
     g.laws.startEra = o.startEra;
-    if (isMobile) g.laws.maxPop = 2000;
+    g.laws.maxPop = suggestedMaxPop(world.n, isMobile);
     g.populateWorld(o.civs, o.animals);
     return g;
   }

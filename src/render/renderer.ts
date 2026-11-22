@@ -5,6 +5,7 @@ import { Unit, Building, City, Kingdom } from '../sim/entities';
 import { UK, UDEF, ADULT_AGE, TPY, SOLDIERS, JOB } from '../sim/defs';
 import { T } from '../sim/terrain';
 import { TerrainTex, MapMode } from './terrainTex';
+import { flagCanvas } from './flags';
 import { personSprite, creatureSprite, shipSprite, planeSprite, buildingSprite, buildingExtraHeight, glowSprite, RGB } from './sprites';
 
 export interface Camera { x: number; y: number; zoom: number; }
@@ -23,6 +24,18 @@ interface VFx {
 }
 
 const ART = 4;
+/** People and creatures are drawn smaller than the terrain/building pixel scale so cities read at a human scale. */
+function unitScale(kind: number): number {
+  switch (kind) {
+    case UK.PERSON: case UK.ZOMBIE: return 0.46;
+    case UK.BOAT: return 0.7;
+    case UK.PLANE: return 0.62;
+    case UK.DRAGON: return 0.8;
+    case UK.KRAKEN: case UK.UFO: return 0.7;
+    case UK.GOLEM: return 0.6;
+    default: return 0.48;
+  }
+}
 
 export class Renderer {
   canvas: HTMLCanvasElement;
@@ -95,7 +108,7 @@ export class Renderer {
     const w = this.g.world;
     const c = this.cam;
     const minZ = Math.min(this.vw / w.w, this.vh / w.h) * 0.5;
-    c.zoom = Math.max(minZ, Math.min(48 * this.dpr, c.zoom));
+    c.zoom = Math.max(minZ, Math.min(80 * this.dpr, c.zoom));
     c.x = Math.max(0, Math.min(w.w, c.x));
     c.y = Math.max(0, Math.min(w.h, c.y));
   }
@@ -187,7 +200,7 @@ export class Renderer {
       else list.push(u);
     }
     list.sort((a, b) => sortY(a) - sortY(b));
-    const tiny = z < 2.2 * this.dpr;
+    const tiny = z < 4.2 * this.dpr;
     for (const e of list) {
       if (e instanceof Building) this.drawBuilding(ctx, e, ox, oy, z, art);
       else if (tiny) this.drawDot(ctx, e, ox, oy, z);
@@ -198,12 +211,12 @@ export class Renderer {
       const sx = ox + u.x * z, sy = oy + u.y * z;
       ctx.fillStyle = 'rgba(0,0,0,0.25)';
       ctx.beginPath();
-      ctx.ellipse(sx, sy, Math.max(2, art * 5), Math.max(1, art * 2), 0, 0, Math.PI * 2);
+      ctx.ellipse(sx, sy, Math.max(2, art * 3), Math.max(1, art * 1.2), 0, 0, Math.PI * 2);
       ctx.fill();
     }
     for (const u of flyers) {
-      if (tiny) this.drawDot(ctx, u, ox, oy - 3 * art * 4, z);
-      else this.drawUnit(ctx, u, ox, oy - 12 * art, z, art);
+      if (tiny) this.drawDot(ctx, u, ox, oy - 2 * art * 4, z);
+      else this.drawUnit(ctx, u, ox, oy - 7 * art, z, art);
     }
 
     this.drawProjectiles(ctx, ox, oy, z, art);
@@ -257,7 +270,7 @@ export class Renderer {
   }
 
   private drawDot(ctx: CanvasRenderingContext2D, u: Unit, ox: number, oy: number, z: number): void {
-    const s = Math.max(1, z * 0.8);
+    const s = Math.max(1, z * (u.kind === UK.PERSON ? 0.45 : 0.6));
     ctx.fillStyle = u.kingdom ? u.kingdom.css : UDEF[u.kind].monster ? '#f33' : UDEF[u.kind].pred ? '#777' : '#eee';
     ctx.fillRect(ox + u.x * z - s / 2, oy + u.y * z - s, s, s);
   }
@@ -279,7 +292,10 @@ export class Renderer {
       case UK.DRAGON: img = creatureSprite(u.kind, ((this.time * 3 + u.id) | 0) & 1); break;
       default: img = creatureSprite(u.kind, frame);
     }
-    const w = img.width * art * scale, h = img.height * art * scale;
+    const us = unitScale(u.kind);
+    scale *= us;
+    art *= us;
+    const w = img.width * art * scale / us, h = img.height * art * scale / us;
     const sx = ox + u.x * z, sy = oy + u.y * z;
     let dx = sx - w / 2, dy = sy - h + art;
     if (u.anim > 3 && u.tUnit) dx += u.facing * art;
@@ -615,33 +631,56 @@ export class Renderer {
   }
 
   private drawLabels(ctx: CanvasRenderingContext2D, ox: number, oy: number, z: number): void {
-    if (z < 1.6 * this.dpr) return;
-    const fs = Math.round(Math.max(10, Math.min(15, z * 1.2)) * this.dpr * 0.9);
-    ctx.font = `700 ${fs}px system-ui, -apple-system, Segoe UI, Roboto, sans-serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
+    const seed = this.g.seed;
+    if (z < 3.2 * this.dpr) {
+      // zoomed out: label nations like a world map
+      for (const k of this.g.kingdoms) {
+        let sx = 0, sy = 0, wsum = 0;
+        for (const c of k.cities) { const wgt = c.members.length + 1; sx += c.x * wgt; sy += c.y * wgt; wsum += wgt; }
+        if (!wsum) continue;
+        sx = ox + (sx / wsum) * z;
+        sy = oy + (sy / wsum) * z;
+        if (sx < -200 || sx > this.vw + 200 || sy < -40 || sy > this.vh + 40) continue;
+        const fs = Math.round(Math.max(10, Math.min(18, 8 + Math.sqrt(k.pop) * 0.35)) * this.dpr);
+        ctx.font = `800 ${fs}px system-ui, -apple-system, Segoe UI, Roboto, sans-serif`;
+        const label = this.g.kName(k);
+        const fw = fs * 1.35, fh = fs * 0.9;
+        const tw = ctx.measureText(label).width;
+        ctx.fillStyle = 'rgba(10,14,24,0.55)';
+        roundRect(ctx, sx - tw / 2 - fw - fs * 0.6, sy - fs * 0.75, tw + fw + fs * 1.1, fs * 1.5, fs * 0.4);
+        ctx.fill();
+        ctx.drawImage(flagCanvas(k, seed), sx - tw / 2 - fw - fs * 0.3, sy - fh / 2, fw, fh);
+        ctx.fillStyle = '#fff';
+        ctx.fillText(label, sx + fs * 0.05, sy + 1);
+      }
+      return;
+    }
+    const fs = Math.round(Math.max(10, Math.min(15, z * 1.2)) * this.dpr * 0.9);
+    ctx.font = `700 ${fs}px system-ui, -apple-system, Segoe UI, Roboto, sans-serif`;
     for (const c of this.g.cities) {
       const sx = ox + c.x * z;
       const sy = oy + (c.y - 3.2) * z - 26 * this.dpr * Math.min(1, z / 10);
       if (sx < -100 || sx > this.vw + 100 || sy < -40 || sy > this.vh + 40) continue;
       const cap = c.kingdom.capital === c;
       const label = `${cap ? '★ ' : ''}${c.name} ${c.members.length}`;
-      const tw = ctx.measureText(label).width + fs * 1.2;
+      const fw = fs * 1.2, fh = fs * 0.8;
+      const tw = ctx.measureText(label).width + fw + fs * 0.9;
       ctx.fillStyle = 'rgba(10,14,24,0.72)';
       roundRect(ctx, sx - tw / 2, sy - fs * 0.75, tw, fs * 1.5, fs * 0.4);
       ctx.fill();
-      ctx.fillStyle = c.kingdom.css;
-      ctx.fillRect(sx - tw / 2 + fs * 0.25, sy - fs * 0.35, fs * 0.35, fs * 0.7);
+      ctx.drawImage(flagCanvas(c.kingdom, seed), sx - tw / 2 + fs * 0.3, sy - fh / 2, fw, fh);
       ctx.fillStyle = '#fff';
-      ctx.fillText(label, sx + fs * 0.2, sy + 1);
+      ctx.fillText(label, sx + fw / 2 + fs * 0.05, sy + 1);
     }
   }
 
   private drawSelection(ctx: CanvasRenderingContext2D, ox: number, oy: number, z: number, art: number): void {
     const u = this.selUnit;
     if (u && !u.dead) {
-      const sx = ox + u.x * z, sy = oy + u.y * z - (UDEF[u.kind].flying ? 12 * art : 0);
-      const r = Math.max(6, art * 6);
+      const sx = ox + u.x * z, sy = oy + u.y * z - (UDEF[u.kind].flying ? 7 * art : 0);
+      const r = Math.max(5, art * 3.5);
       ctx.strokeStyle = '#fff';
       ctx.lineWidth = Math.max(1.5, this.dpr * 1.5);
       ctx.beginPath();

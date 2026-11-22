@@ -149,6 +149,9 @@ export class City {
   t2 = 0;
   emptyT = 0;
   conquered = 0;
+  fish = -2;
+  fishT = 0;
+  skip = new Map<string, number>();
 
   constructor(id: number, name: string, kingdom: Kingdom, x: number, y: number) {
     this.id = id;
@@ -189,6 +192,16 @@ export interface Relation {
   truce: number;
   exhaustion: number;
   memory: number;
+  trade: boolean;     // trade agreement
+  nap: number;        // non-aggression pact valid until tick
+  warScore: number;   // our success in the current war
+}
+
+export interface InfraProject {
+  kind: 'road' | 'rail' | 'highway';
+  path: number[];
+  i: number;
+  key: string;
 }
 
 export class Kingdom {
@@ -226,6 +239,13 @@ export class Kingdom {
   t2 = 0;
   colonyShips = 0;
   warCount = 0;
+  warheads = 0;
+  nuclearTested = false;
+  nukedBy = 0;        // kingdom id that last nuked us (for retaliation)
+  nukedAt = 0;
+  lastLaunch = -99999;
+  infra: InfraProject | null = null;
+  links = new Set<string>();
 
   constructor(id: number, baseName: string, species: number, color: [number, number, number]) {
     this.id = id;
@@ -239,7 +259,7 @@ export class Kingdom {
   relation(other: Kingdom): Relation {
     let r = this.rel.get(other.id);
     if (!r) {
-      r = { opinion: 0, war: false, warStart: 0, ally: false, truce: 0, exhaustion: 0, memory: 0 };
+      r = { opinion: 0, war: false, warStart: 0, ally: false, truce: 0, exhaustion: 0, memory: 0, trade: false, nap: 0, warScore: 0 };
       this.rel.set(other.id, r);
     }
     return r;

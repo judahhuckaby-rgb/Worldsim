@@ -143,7 +143,7 @@ export function updateDisasters(g: Game): void {
             if (w.fire[i]) w.fire[i] = 0;
             const t = w.ter[i];
             if (t === T.SHALLOW || t === T.WATER) w.setTer(i, T.ICE);
-            else if (TER[t].elev === 4 && t !== T.ROAD && t !== T.PAVED && t !== T.FARM && t !== T.LAVA) { w.biome[i] = T.SNOW; w.setTer(i, T.SNOW); }
+            else if (TER[t].elev === 4 && t !== T.ROAD && t !== T.PAVED && t !== T.RAIL && t !== T.FARM && t !== T.LAVA) { w.biome[i] = T.SNOW; w.setTer(i, T.SNOW); }
             else if (t === T.LAVA) { w.setTer(i, T.MOUNTAIN); }
             else if (t === T.HILLS || t === T.MOUNTAIN) { w.biome[i] = T.SNOW; w.mark(i); }
           } else if (d.kind === 'drought') {

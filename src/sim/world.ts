@@ -149,7 +149,7 @@ export class World {
     const t = this.ter[i];
     const e = TER[t].elev;
     if (e <= 3 || e === 4) {
-      if (t !== T.ROAD && t !== T.PAVED && t !== T.FARM) this.setTer(i, b);
+      if (t !== T.ROAD && t !== T.PAVED && t !== T.RAIL && t !== T.FARM) this.setTer(i, b);
       else this.mark(i);
     } else this.mark(i); // hills/mountains get tinted by biome
     // swap flora to match

@@ -1,6 +1,6 @@
 // Weighted A* on the tile grid (land or water mode), allocation-free between calls.
 import { World } from './world';
-import { TER } from './terrain';
+import { TER, T } from './terrain';
 
 export class Pathfinder {
   w: number;
@@ -63,7 +63,7 @@ export class Pathfinder {
   }
 
   /**
-   * Find a path from (sx,sy) to (tx,ty). mode 0 = land, 1 = water.
+   * Find a path from (sx,sy) to (tx,ty). mode 0 = land, 1 = water, 2 = plan railway, 3 = plan road.
    * Returns list of tile indices (excluding start), or null.
    * If the goal is impassable, a neighbouring passable tile is accepted.
    */
@@ -122,6 +122,16 @@ export class Pathfinder {
           mult = TER[tj].move;
           if (mult <= 0) continue;
           if (diag && (TER[ter[y * w + nx]].move <= 0 || TER[ter[ny * w + x]].move <= 0)) continue;
+        } else if (mode >= 2) {
+          // infrastructure planning: 2 = railway (keeps off roads), 3 = road (reuses roads)
+          if (TER[tj].move <= 0 || tj === T.LAVA) continue;
+          if (diag) continue;
+          if (tj === T.MOUNTAIN) mult = 0.25;
+          else if (tj === T.HILLS || tj === T.SWAMP) mult = 0.6;
+          else if (tj === T.RAIL) mult = mode === 2 ? 2.5 : 0.5;
+          else if (tj === T.ROAD || tj === T.PAVED) mult = mode === 2 ? 0.3 : 2.5;
+          else mult = 1;
+          if (world.bld[j]) mult *= 0.1;
         } else {
           if (tj > 2) continue;
           if (diag && (ter[y * w + nx] > 2 || ter[ny * w + x] > 2)) continue;
@@ -144,7 +154,7 @@ export class Pathfinder {
   }
 
   private pass(t: number, mode: number): boolean {
-    return mode === 0 ? TER[t].move > 0 : t <= 2;
+    return mode === 1 ? t <= 2 : TER[t].move > 0;
   }
 
   private build(end: number, goal: number, start: number): number[] {

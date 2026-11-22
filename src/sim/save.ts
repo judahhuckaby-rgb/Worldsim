@@ -57,6 +57,11 @@ export function serialize(g: Game): string {
     v: 1,
     seed: g.seed, mapType: g.mapType, tick: g.tick, nextId: g.nextId, carbon: g.carbon, laws: g.laws, colorI: g.colorI, stats: g.stats,
     popHistory: g.popHistory.slice(-600),
+    politics: {
+      council: g.council ? { name: g.council.name, founded: g.council.founded, members: Array.from(g.council.members), sessions: g.council.sessions } : null,
+      accords: g.accords.map(a => ({ kind: a.kind, name: a.name, founded: a.founded, signatories: Array.from(a.signatories), withdrawn: Array.from(a.withdrawn) })),
+      winter: r2(g.nuclearWinter), combat: g.combatNukes, lastNuke: g.lastNukeYear, free: g.nukeFreeAnnounced, treaties: g.treaties,
+    },
     world: {
       w: w.w, h: w.h,
       ter: rle8(w.ter), biome: rle8(w.biome), flora: rle8(w.flora), fstate: rle8(w.fstate), res: rle8(w.res), poll: rle8(w.poll), heat: rle8(w.heat),
@@ -64,7 +69,8 @@ export function serialize(g: Game): string {
     },
     kingdoms: g.allKingdoms.map(k => ({
       id: k.id, n: k.baseName, sp: k.species, c: k.color, t: Array.from(k.techs).map(String).join(''), rs: k.researching, pr: r2(k.progress),
-      res: k.res.map(r2), rel: Array.from(k.rel.entries()).map(([id, r]) => [id, r2(r.opinion), r.war ? 1 : 0, r.warStart, r.ally ? 1 : 0, r.truce, r2(r.exhaustion), r2(r.memory)]),
+      res: k.res.map(r2), rel: Array.from(k.rel.entries()).map(([id, r]) => [id, r2(r.opinion), r.war ? 1 : 0, r.warStart, r.ally ? 1 : 0, r.truce, r2(r.exhaustion), r2(r.memory), r.trade ? 1 : 0, r.nap, r2(r.warScore)]),
+      wh: k.warheads, nt: k.nuclearTested, nb: k.nukedBy, na: k.nukedAt, ln: Array.from(k.links),
       alive: k.alive, f: k.founded, king: k.king ? k.king.id : 0, l: k.launches, asc: k.ascended, nk: k.nukesLaunched, pp: k.peakPop, ey: k.eraYears, cs: k.colonyShips,
       cap: k.capital ? k.capital.id : 0, dy: k.diedYear,
     })),
@@ -106,6 +112,16 @@ export function deserialize(json: string): Game {
   g.colorI = d.colorI;
   g.stats = d.stats;
   g.popHistory = d.popHistory || [];
+  const pol = d.politics;
+  if (pol) {
+    g.council = pol.council ? { name: pol.council.name, founded: pol.council.founded, members: new Set(pol.council.members), sessions: pol.council.sessions } : null;
+    g.accords = (pol.accords || []).map((a: any) => ({ kind: a.kind, name: a.name, founded: a.founded, signatories: new Set(a.signatories), withdrawn: new Set(a.withdrawn) }));
+    g.nuclearWinter = pol.winter || 0;
+    g.combatNukes = pol.combat || 0;
+    g.lastNukeYear = pol.lastNuke ?? -1;
+    g.nukeFreeAnnounced = !!pol.free;
+    g.treaties = pol.treaties || 0;
+  }
   g.history = d.history || [];
   // kingdoms
   for (const kd of d.kingdoms) {
@@ -114,7 +130,12 @@ export function deserialize(json: string): Game {
     k.researching = kd.rs;
     k.progress = kd.pr;
     for (let i = 0; i < NUM_RES; i++) k.res[i] = kd.res[i] || 0;
-    for (const r of kd.rel) k.rel.set(r[0], { opinion: r[1], war: !!r[2], warStart: r[3], ally: !!r[4], truce: r[5], exhaustion: r[6], memory: r[7] });
+    for (const r of kd.rel) k.rel.set(r[0], { opinion: r[1], war: !!r[2], warStart: r[3], ally: !!r[4], truce: r[5], exhaustion: r[6], memory: r[7], trade: !!r[8], nap: r[9] || 0, warScore: r[10] || 0 });
+    k.warheads = kd.wh || 0;
+    k.nuclearTested = !!kd.nt;
+    k.nukedBy = kd.nb || 0;
+    k.nukedAt = kd.na || 0;
+    k.links = new Set(kd.ln || []);
     k.alive = kd.alive;
     k.founded = kd.f;
     k.launches = kd.l;

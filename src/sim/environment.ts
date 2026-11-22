@@ -6,7 +6,7 @@ export function environmentTick(g: Game): void {
   updateFire(g);
   updateLava(g);
   const w = g.world;
-  const samples = Math.max(120, (w.n / 110) | 0);
+  const samples = Math.max(120, (w.n / 160) | 0);
   const rng = g.rng;
   for (let s = 0; s < samples; s++) tileTick(g, (rng.next() * w.n) | 0);
 }
@@ -107,12 +107,16 @@ function tileTick(g: Game, i: number): void {
   const f = w.flora[i];
   const rng = g.rng;
   if (t === T.FARM) {
-    if (f === F.CROP) {
-      const old = w.fstate[i];
-      const nv = Math.min(255, old + 16 + rng.int(12));
-      w.fstate[i] = nv;
-      if ((old >> 6) !== (nv >> 6)) w.mark(i);
-    } else w.setFlora(i, F.CROP);
+    // crops are grown by their city (see ai_city); untended farms slowly ripen too
+    if (f !== F.CROP) w.setFlora(i, F.CROP);
+    else if (!w.owner[i] && w.fstate[i] < 250) { w.fstate[i] += 10; if ((w.fstate[i] & 63) < 10) w.mark(i); }
+    return;
+  }
+  // nuclear winter: ash-darkened skies freeze the land
+  if (g.nuclearWinter > 1.2 && t >= 4 && t <= 9 && rng.next() < (g.nuclearWinter - 1.2) * 0.004) {
+    w.biome[i] = T.SNOW;
+    w.setTer(i, T.SNOW);
+    if (isTree(f) && rng.next() < 0.5) w.setFlora(i, F.DEAD);
     return;
   }
   const p = w.poll[i];
@@ -172,7 +176,7 @@ function tileTick(g: Game, i: number): void {
   if (f === F.DEAD) { if (rng.next() < 0.03) w.setFlora(i, F.NONE); return; }
   if (f === F.FLOWER) { if (rng.next() < 0.02) w.setFlora(i, F.NONE); return; }
   if (f === F.NONE) {
-    if (w.bld[i] || t === T.ROAD || t === T.PAVED || t === T.LAVA || t === T.WASTE || t === T.ICE || t <= 2 || t === T.MOUNTAIN || t === T.PEAK) return;
+    if (w.bld[i] || t === T.ROAD || t === T.PAVED || t === T.RAIL || t === T.LAVA || t === T.WASTE || t === T.ICE || t <= 2 || t === T.MOUNTAIN || t === T.PEAK) return;
     const nt = treeFor(t);
     if (nt === F.NONE) return;
     const W = w.w, x = i % W, y = (i / W) | 0;

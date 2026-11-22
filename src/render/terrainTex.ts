@@ -175,8 +175,29 @@ export class TerrainTex {
           case T.LAVA: { n = 0; if (h > 0.75) { r = 255; gg = 200; b = 60; } else if (h < 0.2) { r = 200; gg = 40; b = 20; } break; }
           case T.ASH: if (h > 0.9) { r += 30; gg += 20; b += 10; } break;
           case T.WASTE: if (h > 0.8) { r -= 20; gg -= 20; b -= 10; } else if (h < 0.1) { r = 90; gg = 110; b = 60; } break;
-          case T.ROAD: { const edge = px === 0 || py === 0 || px === S - 1 || py === S - 1; if (edge) { r -= 14; gg -= 14; b -= 10; } n *= 0.4; break; }
-          case T.PAVED: { n *= 0.3; if ((px === 1 || px === 2) && (py === 1 || py === 2) && ((tx + ty) & 1)) { r = 200; gg = 200; b = 170; } break; }
+          case T.ROAD: case T.PAVED: {
+            n *= 0.35;
+            // which sides continue the street?
+            const rdN = nN === T.ROAD || nN === T.PAVED || nN === T.RAIL, rdS = nS === T.ROAD || nS === T.PAVED || nS === T.RAIL;
+            const rdW = nW === T.ROAD || nW === T.PAVED || nW === T.RAIL, rdE = nE === T.ROAD || nE === T.PAVED || nE === T.RAIL;
+            const curb = (py === 0 && !rdN) || (py === S - 1 && !rdS) || (px === 0 && !rdW) || (px === S - 1 && !rdE);
+            if (t === T.PAVED) {
+              if (curb) { r = 150; gg = 150; b = 150; }
+              else if (rdW && rdE && !rdN && !rdS && (py === 1 || py === 2) && py === 1 && px >= 1 && px <= 2 && ((tx & 1) === 0)) { r = 220; gg = 200; b = 110; }
+              else if (rdN && rdS && !rdW && !rdE && px === 1 && py >= 1 && py <= 2 && ((ty & 1) === 0)) { r = 220; gg = 200; b = 110; }
+            } else if (curb) { r -= 16; gg -= 16; b -= 12; }
+            break;
+          }
+          case T.RAIL: {
+            n *= 0.3;
+            const hor = nE === T.RAIL || nW === T.RAIL, ver = nN === T.RAIL || nS === T.RAIL;
+            const h2 = hor || !ver, v2 = ver;
+            const tie = (h2 && (px === 0 || px === 2)) || (v2 && (py === 0 || py === 2));
+            const railP = (h2 && (py === 1 || py === 2)) || (v2 && (px === 1 || px === 2));
+            if (railP) { r = 70; gg = 72; b = 80; }
+            else if (tie) { r = 96; gg = 70; b = 46; }
+            break;
+          }
           case T.FARM: {
             n *= 0.4;
             if (py % 2 === 1) { r -= 18; gg -= 14; b -= 8; }

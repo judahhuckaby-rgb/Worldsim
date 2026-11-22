@@ -7,6 +7,8 @@ import { TECHS, NUM_TECH, canResearch, TECH_BY_ID } from './tech';
 import { SPECIES } from './species';
 import { T, TER, RES } from './terrain';
 import { refreshStats, MISSION } from './ai_units';
+import { updateInfrastructure } from './infra';
+import { nuclearPolicy, hasTech } from './politics';
 
 const DT = 30;
 
@@ -24,8 +26,11 @@ export function updateKingdom(g: Game, k: Kingdom): void {
   k.pop = pop;
   k.soldiers = soldiers;
   k.strength = strength + pop * 2;
-  if (!k.capital || k.capital.dead || k.capital.kingdom !== k) {
-    k.capital = k.cities.reduce((a, b) => (b.members.length > a.members.length ? b : a), k.cities[0]);
+  const largest = k.cities.reduce((a, b) => (b.members.length > a.members.length ? b : a), k.cities[0]);
+  if (!k.capital || k.capital.dead || k.capital.kingdom !== k) k.capital = largest;
+  else if (k.t2 % 20 === 0 && largest !== k.capital && k.capital.members.length < largest.members.length * 0.4 && largest.members.length > 30) {
+    g.log(`${g.kName(k)} moved its capital from ${k.capital.name} to ${largest.name}`, 'city', largest.x, largest.y, k.css);
+    k.capital = largest;
   }
   // royal succession
   if (!k.king || k.king.dead || k.king.kingdom !== k) {
@@ -37,10 +42,12 @@ export function updateKingdom(g: Game, k: Kingdom): void {
     if (best) { k.king = best; best.isKing = true; refreshStats(g, best); }
   }
   if (g.laws.research) research(g, k, pop);
+  for (const r of k.rel.values()) if (r.trade) k.res[RES.GOLD] += (1 + k.era * 0.3) * DT / TPY;
   diplomacy(g, k);
   if (k.t2 % 4 === 0) wars(g, k);
   if (k.t2 % 6 === 3) expand(g, k);
   if (k.t2 % 2 === 1) specialOps(g, k);
+  updateInfrastructure(g, k);
 }
 
 // ------------------------------------------------------------------ research
@@ -52,7 +59,9 @@ function research(g: Game, k: Kingdom, pop: number): void {
     for (const b of c.buildings) if (b.progress >= 1) flat += b.def.research * 0.6;
     if (c.has('power')) powerBoost = 1.1;
   }
-  let rate = (0.5 * Math.pow(pop, 0.72) + flat) * sp.research * k.caps.researchMult * powerBoost;
+  let rate = (0.5 * Math.pow(pop, 0.72) + Math.pow(flat, 0.85)) * sp.research * k.caps.researchMult * powerBoost;
+  // sprawling empires lose efficiency to bureaucracy
+  rate /= 1 + Math.max(0, k.cities.length - 6) * 0.045;
   if (k.ascended) rate *= 1.5;
   if (k.researching < 0) pickTech(g, k);
   if (k.researching < 0) { k.researchRate = 0; return; }
@@ -61,9 +70,9 @@ function research(g: Game, k: Kingdom, pop: number): void {
   for (const o of g.kingdoms) {
     if (o === k || !o.techs[k.researching]) continue;
     const r = k.rel.get(o.id);
-    if (r && !r.war && r.opinion > -40) diff += 0.15;
+    if (r && !r.war && r.opinion > -40) diff += r.trade ? 0.3 : 0.12;
   }
-  rate *= Math.min(1.6, diff) * g.laws.researchSpeed;
+  rate *= Math.min(2.2, diff) * g.laws.researchSpeed;
   k.researchRate = rate;
   k.progress += (rate * DT) / TPY;
   const td = TECHS[k.researching];
@@ -135,6 +144,9 @@ function diplomacy(g: Game, k: Kingdom): void {
     if (k.pop > 150 && o.pop > 150 && dist < 70) target -= 15;
     if (o.pop > k.pop * 2 && dist < 60) target -= 8;
     if (r.ally) target += 30;
+    if (r.trade) target += 12;
+    if (r.nap > g.tick) target += 6;
+    if (g.council && g.council.members.has(k.id) && g.council.members.has(o.id)) target += 5;
     if (k.techs[TECH_BY_ID['currency'].idx] && o.techs[TECH_BY_ID['currency'].idx]) target += 6;
     if (k.techs[TECH_BY_ID['internet'].idx] && o.techs[TECH_BY_ID['internet'].idx]) target += 10;
     target -= r.memory;
@@ -154,17 +166,57 @@ function diplomacy(g: Game, k: Kingdom): void {
     r.opinion = Math.max(-100, Math.min(100, r.opinion));
     r.memory *= 0.99;
     if (r.war) {
+      if (r.trade) { r.trade = false; o.relation(k).trade = false; }
       r.exhaustion += 1;
       if (k.pop < k.peakPop * 0.6) r.exhaustion += 2;
+      const losing = r.warScore < o.relation(k).warScore - 20;
+      if (losing) r.exhaustion += 1.5;
       const years = (g.tick - r.warStart) / TPY;
-      if (years > 10 && g.rng.chance(0.0015 * r.exhaustion)) g.makePeace(k, o);
-      if (years > 60 && g.rng.chance(0.05)) g.makePeace(k, o);
+      if (years > 6 && g.rng.chance(0.0012 * r.exhaustion * (losing ? 1.6 : 1))) g.makePeace(k, o);
+      else if (years > 50 && g.rng.chance(0.05)) g.makePeace(k, o);
     } else if (g.laws.war) {
-      if (g.tick > r.truce && k.wars < 2 && r.opinion < -18 && !r.ally && k.soldiers >= 3) {
+      const napActive = r.nap > g.tick;
+      if (g.tick > r.truce && k.wars < 2 && r.opinion < (napActive ? -60 : -18) && !r.ally && k.soldiers >= 3) {
         const reachable = dist < 80 && (sameIsland(g, k, o) || k.caps.ship >= 0);
-        if (reachable && k.strength > o.strength * 0.65 && g.rng.chance(0.014 * sp.aggression)) {
-          const reasons = ['over disputed borders', 'seeking glory', 'to claim fertile lands', 'after a border skirmish', 'over ancient grudges', 'for their resources'];
-          g.declareWar(k, o, g.rng.pick(reasons));
+        // nuclear deterrence: few dare attack a nuclear power
+        const deter = o.warheads > 0 ? (k.warheads > 0 ? 0.25 : 0.08) : 1;
+        if (reachable && k.strength > o.strength * 0.65 && g.rng.chance(0.012 * sp.aggression * deter)) {
+          const reasons = ['over disputed borders', 'seeking glory', 'to claim fertile lands', 'after a border skirmish', 'over ancient grudges', 'for their resources', 'over a trade dispute', 'to liberate their kin'];
+          if (napActive) {
+            r.nap = 0; o.relation(k).nap = 0;
+            for (const x of g.kingdoms) if (x !== k && x !== o) { const rx = x.relation(k); rx.opinion -= 15; rx.memory += 8; }
+            g.declareWar(k, o, 'breaking their non-aggression pact');
+          } else g.declareWar(k, o, g.rng.pick(reasons));
+        }
+      }
+      // peaceful unification of small kin nations
+      if (o.species === k.species && r.opinion > 45 && o.cities.length <= 2 && o.pop < k.pop * 0.4 && dist < 70 && o.wars === 0 && g.rng.chance(0.006)) {
+        const ro = o.relation(k);
+        if (ro.opinion > 30) {
+          for (const c of o.cities.slice()) g.captureCity(c, k, true, true);
+          continue;
+        }
+      }
+      // trade agreements
+      if (!r.trade && r.opinion > 20 && dist < 110 && hasTech(k, 'currency') && hasTech(o, 'currency') && g.rng.chance(0.003)) {
+        const ro = o.relation(k);
+        if (ro.opinion > 10 && !ro.war) {
+          r.trade = ro.trade = true;
+          g.treaties++;
+          g.log(`📜 ${g.kName(k)} and ${g.kName(o)} signed a trade agreement`, 'treaty', -1, -1, '#fc6');
+        }
+      }
+      if (r.trade && r.opinion < -15) {
+        r.trade = false; o.relation(k).trade = false;
+        g.log(`${g.kName(k)} cancelled its trade agreement with ${g.kName(o)}`, 'treaty', -1, -1, '#aaa');
+      }
+      // non-aggression pacts between wary neighbours
+      if (!napActive && !r.ally && dist < 70 && r.opinion > -10 && r.opinion < 50 && k.era >= 2 && g.rng.chance(0.0007)) {
+        const ro = o.relation(k);
+        if (ro.opinion > -10) {
+          r.nap = ro.nap = g.tick + TPY * 30;
+          g.treaties++;
+          g.log(`📜 ${g.kName(k)} and ${g.kName(o)} signed a 30-year non-aggression pact`, 'treaty', -1, -1, '#fc6');
         }
       }
       if (!r.ally && r.opinion > 55 && g.rng.chance(0.01)) {
@@ -311,7 +363,6 @@ function citySiteScore(g: Game, k: Kingdom, x: number, y: number): number {
 function expand(g: Game, k: Kingdom): void {
   const maxCities = 2 + Math.floor(k.era * 1.4) + Math.floor(k.pop / 40);
   if (k.cities.length >= Math.min(22, maxCities)) return;
-  if (g.personPop > g.laws.maxPop * 0.92) return;
   const w = g.world;
   for (const c of k.cities) {
     if (c.members.length < 20 || c.food < 15 || !g.rng.chance(c.members.length > 90 ? 0.7 : 0.35)) continue;
@@ -431,29 +482,17 @@ function specialOps(g: Game, k: Kingdom): void {
       break;
     }
   }
-  // uranium imports: atomic powers buy fuel with gold
-  if (k.caps.extract.has(RES.URANIUM) && k.res[RES.URANIUM] < 12 && k.res[RES.GOLD] >= 40) {
-    k.res[RES.GOLD] -= 40;
-    k.res[RES.URANIUM] += 1;
+  // world markets: buy strategic resources the homeland lacks
+  const imports: [number, number, number][] = [[RES.COAL, 25, 6], [RES.OIL, 25, 8], [RES.URANIUM, 15, 18], [RES.METAL, 40, 4]];
+  for (const [r, want, price] of imports) {
+    if (!k.caps.extract.has(r) || k.res[r] >= want) continue;
+    const n = Math.min(4, Math.floor(k.res[RES.GOLD] / price));
+    if (n > 0) { k.res[RES.GOLD] -= n * price; k.res[r] += n; }
   }
-  // nuclear strikes
-  if (atWar && k.caps.nukes && g.laws.nukes && k.res[RES.URANIUM] >= 6) {
-    const desperate = k.pop < k.peakPop * 0.65 ? 4 : 1;
-    if (g.rng.chance(0.005 * desperate * (SPECIES[k.species].aggression))) {
-      for (const c of k.cities) {
-        const silo = c.find('silo');
-        if (!silo) continue;
-        let tgt: City | null = null, bp = 0;
-        for (const o of g.kingdoms) if (k.atWar(o)) for (const ec of o.cities) if (ec.members.length > bp) { bp = ec.members.length; tgt = ec; }
-        if (!tgt) break;
-        k.res[RES.URANIUM] -= 6;
-        k.nukesLaunched++;
-        g.shoot(P.MISSILE, silo.cx, silo.y, tgt.x, tgt.y, 0, 10, null, null, k);
-        g.log(`☢ ${g.kName(k)} launched a nuclear missile at ${tgt.name}!`, 'nuke', tgt.x, tgt.y, '#ff0', true);
-        break;
-      }
-    }
-  }
+  // nuclear arsenal, deterrence, strikes and disarmament
+  let silo = null;
+  for (const c of k.cities) { silo = c.find('silo'); if (silo) break; }
+  nuclearPolicy(g, k, silo);
   // space program
   if (k.caps.space) {
     for (const c of k.cities) {

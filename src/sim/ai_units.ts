@@ -568,10 +568,14 @@ function jobGather(g: Game, u: Unit): void {
     });
     if (prey) { u.tUnit = prey; return; }
   }
-  const i = spiral(g, u.x, u.y, 10, j => w.flora[j] === F.BUSH && (w.owner[j] === c.id || w.owner[j] === 0), 3);
+  const i = spiral(g, u.x, u.y, 7, j => w.flora[j] === F.BUSH && (w.owner[j] === c.id || w.owner[j] === 0), 3);
   if (i >= 0) { startWork(g, u, i, (i % w.w) + 0.5, ((i / w.w) | 0) + 0.5); return; }
-  // fishing from shore
-  const wi = spiral(g, c.x, c.y, 9, j => w.ter[j] === T.SHALLOW, 4);
+  // fishing from shore (the city remembers its fishing grounds)
+  if (c.fish === -2 || (c.fish >= 0 && w.ter[c.fish] !== T.SHALLOW) || g.tick - c.fishT > 2400) {
+    c.fish = spiral(g, c.x, c.y, 9, j => w.ter[j] === T.SHALLOW, 4);
+    c.fishT = g.tick;
+  }
+  const wi = c.fish;
   if (wi >= 0) {
     const wx = wi % w.w, wy = (wi / w.w) | 0;
     const li = w.nearestLand(wx + 0.5, wy + 0.5, 1);
@@ -835,7 +839,7 @@ function thinkPredator(g: Game, u: Unit): void {
 
 function breed(g: Game, u: Unit, p: number): void {
   if (!g.laws.animals) return;
-  const cap = Math.floor(g.world.n / (u.kind === UK.WOLF || u.kind === UK.BEAR ? 1800 : 500));
+  const cap = Math.floor(g.world.n / (u.kind === UK.WOLF || u.kind === UK.BEAR ? 3000 : 900));
   if (g.kindCount[u.kind] >= cap) return;
   if (u.ageT < TPY * 2) return;
   if (!g.rng.chance(p)) return;

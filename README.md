@@ -10,7 +10,8 @@ Runs on **Windows** (Electron) and **Android** (APK, Capacitor), from one TypeSc
 ## Features
 
 **World**
-- Procedural worlds: continents, pangaea, archipelago, lakelands, highlands, empty ocean; four sizes
+- **Earth map**: real coastlines (Natural Earth, public domain), major mountain ranges, deserts and climate zones
+- Procedural worlds: continents, pangaea, archipelago, lakelands, highlands, empty ocean; sizes up to 704×480 tiles
 - 21 terrain types and 7 biomes, forests that spread, crops that ripen, deposits of ore, gold, coal, oil and uranium
 - Terrain tools: raise/lower land, paint every biome, lava, forests, flowers, clearing
 
@@ -21,12 +22,23 @@ Runs on **Windows** (Electron) and **Android** (APK, Capacitor), from one TypeSc
 
 **Civilization**
 - Villages gather, farm, chop, mine, build, and grow into towns, cities and metropolises with borders
+- Realistic demographics: high mortality and slow growth early, population booms after medicine and sanitation
+- Cities lay out street grids and city blocks; nations build intercity roads, railways and paved highways tile by tile
 - Settlers found new cities; ships carry colonists and armies across the sea
-- Diplomacy: opinions, alliances, border incidents, rivalries, wars, conquests, peace treaties, rebellions
 - Governments evolve with the era: Tribe → Chiefdom → Kingdom → Empire → Republic → Federation → Star Union
+
+**Nations & world politics**
+- Every nation has its own flag; zoomed out, the map reads like a political world map
+- Trade agreements (with trade roads and gold), non-aggression pacts, alliances, border incidents, rivalries, rebellions
+- Wars keep score; named peace treaties make the loser cede cities and pay reparations
+- A World Council forms in the Modern Age, admits nations and brokers peace
+- Nuclear powers test bombs, build arsenals and are deterred from attacking each other; desperate nations may strike first and be answered in kind
+- Nuclear winter after nuclear exchanges; the Council can pass a Nuclear Weapons Ban (signatories disarm, can withdraw) and a Climate Accord
+- Doomsday clock, nuclear arsenals, accords and wars on the 🌐 World affairs screen
 
 **Technology — the main event**
 - 68 technologies across 10 eras: Stone, Bronze, Iron, Medieval, Renaissance, Industrial, Modern, Atomic, Information, Space
+- Paced like history: roughly a thousand-plus simulated years from the first campfire to the space age (adjustable in World laws)
 - Each discovery changes the simulation: farms, roads, docks and ships, castles and knights, muskets and cannons,
   factories and smog, electric city lights at night, tanks, air raids, nuclear missiles, labs, renewable/fusion power, mechs, lasers, rockets
 - 16 soldier types, 6 ship classes and 4 aircraft classes; armies re-equip as their kingdom advances
@@ -81,7 +93,11 @@ cd android && ./gradlew assembleDebug   # android/app/build/outputs/apk/debug/ap
 ```
 
 GitHub Actions (`.github/workflows/build.yml`) builds the Windows installer, portable exe and the APK on every push
-and attaches them to a GitHub Release when a `v*` tag is pushed.
+and publishes them as a GitHub Release.
+
+The APK is signed with `android/app/worldsim-sideload.keystore`, a deliberately public debug-style key
+(standard `android` passwords) so every local and CI build can update an installed copy in place without
+losing saved worlds. It is not meant for store publishing.
 
 ## Project layout
 

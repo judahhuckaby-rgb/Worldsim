@@ -4,9 +4,9 @@ export const T = {
   DEEP: 0, WATER: 1, SHALLOW: 2, SAND: 3,
   GRASS: 4, JUNGLE: 5, SAVANNA: 6, DESERT: 7, SWAMP: 8, TUNDRA: 9, SNOW: 10,
   HILLS: 11, MOUNTAIN: 12, PEAK: 13,
-  LAVA: 14, ASH: 15, WASTE: 16, ROAD: 17, FARM: 18, ICE: 19, PAVED: 20,
+  LAVA: 14, ASH: 15, WASTE: 16, ROAD: 17, FARM: 18, ICE: 19, PAVED: 20, RAIL: 21,
 } as const;
-export const NUM_TER = 21;
+export const NUM_TER = 22;
 
 export interface TerDef {
   key: string;
@@ -45,7 +45,13 @@ export const TER: TerDef[] = [
   D('farm', 'Farmland', [140, 104, 56], 4, false, 0.9, true, 0, 1),
   D('ice', 'Ice', [206, 230, 244], 2, false, 0.7, false, 0, 0),
   D('paved', 'Paved Road', [88, 88, 94], 4, false, 1.9, false, 0, 0),
+  D('rail', 'Railway', [128, 116, 104], 4, false, 2.4, false, 0, 0),
 ];
+
+/** Roads, highways and railways. */
+export function isRoad(t: number): boolean {
+  return t === T.ROAD || t === T.PAVED || t === T.RAIL;
+}
 
 /** Biome land types a tile can "remember" (restored when raised above water). */
 export const BIOMES = [T.GRASS, T.JUNGLE, T.SAVANNA, T.DESERT, T.SWAMP, T.TUNDRA, T.SNOW];

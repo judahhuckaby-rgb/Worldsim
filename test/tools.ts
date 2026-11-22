@@ -11,6 +11,7 @@ const g = new Game(world, 99);
 g.headless = true;
 g.populateWorld(6, true);
 for (let t = 0; t < TPY * 80; t++) g.step();
+console.log(`before tools: year ${g.year} pop ${g.personPop} kingdoms ${g.kingdoms.length}`);
 const msgs: string[] = [];
 const ctx = { toast: (m: string) => msgs.push(m), pickKingdom: { first: null as any } };
 let fails = 0;
@@ -21,15 +22,20 @@ for (const tool of TOOLS) {
     tool.apply(g, x, y, 3, ctx);
     if (tool.id === 'war') { const c2 = g.cities.find(o => o.kingdom !== c.kingdom); if (c2) tool.apply(g, c2.x, c2.y, 3, ctx); }
     for (let t = 0; t < 60; t++) g.step();
+    if (g.personPop === 0 && !(globalThis as any).__dead) { (globalThis as any).__dead = 1; console.log('population wiped out after tool', tool.id); }
   } catch (e) {
     fails++;
     console.log('TOOL FAIL', tool.id, (e as Error).stack);
   }
 }
 for (let t = 0; t < TPY * 20; t++) g.step();
+console.log(`at save: year ${g.year} pop ${g.personPop} kingdoms ${g.kingdoms.length} cities ${g.cities.length}`);
 const json = serialize(g);
 const g2 = deserialize(json);
 g2.headless = true;
+console.log(`after load: year ${g2.year} pop ${g2.personPop} kingdoms ${g2.kingdoms.length} cities ${g2.cities.length}`);
+for (let t = 0; t < TPY * 2; t++) g2.step();
+console.log(`2y after load: pop ${g2.personPop} kingdoms ${g2.kingdoms.length} cities ${g2.cities.length}`);
 for (let t = 0; t < TPY * 30; t++) g2.step();
 const json2 = serialize(g2);
 console.log(`tools ok: ${TOOLS.length - fails}/${TOOLS.length}; save ${Math.round(json.length / 1024)}KB; reloaded year ${g2.year} pop ${g2.personPop} kingdoms ${g2.kingdoms.length}; resave ${Math.round(json2.length / 1024)}KB`);

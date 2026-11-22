@@ -149,10 +149,12 @@ const RAW: TD[] = [
   t('colonization', 'Interstellar Colonization', 9, 'sci', ['spaceflight', 'fusion', 'ai'], 'Colony ships to the stars. Launch 5 to ascend.', c => { c.colonize = true; }),
 ];
 
-export const BASE_COST = 45;
-export const ERA_GROWTH = 1.98;
+export const BASE_COST = 150;
+export const ERA_GROWTH = 1.95;
 
-export const TECHS: TechDef[] = RAW.map((r, i) => ({ ...r, idx: i, cost: Math.round(BASE_COST * Math.pow(ERA_GROWTH, r.era) * (r.req.length > 1 ? 1.1 : 1)) }));
+// modern eras take longer: each discovery needs ever larger research programs
+const lateEra = (e: number) => 1 + Math.max(0, e - 4) * 0.4;
+export const TECHS: TechDef[] = RAW.map((r, i) => ({ ...r, idx: i, cost: Math.round(BASE_COST * Math.pow(ERA_GROWTH, r.era) * lateEra(r.era) * (r.req.length > 1 ? 1.1 : 1)) }));
 export const NUM_TECH = TECHS.length;
 export const TECH_BY_ID: Record<string, TechDef> = {};
 for (const td of TECHS) TECH_BY_ID[td.id] = td;

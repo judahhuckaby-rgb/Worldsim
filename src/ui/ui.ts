@@ -11,6 +11,8 @@ import { TOOLS, CATEGORIES, Tool, ToolCtx } from './tools';
 import { personSprite, creatureSprite, buildingSprite, iconURL, css } from '../render/sprites';
 import { MAP_TYPES, MapType } from '../sim/worldgen';
 import { listSlots, SlotMeta } from '../sim/save';
+import { flagImg } from '../render/flags';
+import { doomsday, nuclearPowers, nukeBanned, climateSigned, accord } from '../sim/politics';
 
 export interface NewWorldOpts { w: number; h: number; type: MapType; seed: number; civs: number; animals: boolean; startEra: number; }
 
@@ -32,6 +34,9 @@ export interface AppLike {
 }
 
 const SPEEDS = [1, 2, 5, 10, 20];
+export const WORLD_SIZES = [
+  { name: 'Small', w: 256, h: 176 }, { name: 'Medium', w: 384, h: 256 }, { name: 'Large', w: 512, h: 352 }, { name: 'Huge', w: 704, h: 480 },
+];
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls = '', html = ''): HTMLElementTagNameMap[K] {
   const e = document.createElement(tag);
@@ -73,6 +78,7 @@ export class UI {
   cat = 'terrain';
   modeBtn!: HTMLButtonElement;
   lastToast = 0;
+  defaultSize = 2;
   iconCache = new Map<string, string>();
   canQuit = false;
   onQuit: () => void = () => {};
@@ -121,6 +127,7 @@ export class UI {
     mk('👑', 'Kingdoms', () => this.openKingdoms());
     mk('🧪', 'Technology', () => this.openTechTree(this.bestKingdom()));
     mk('📜', 'History', () => this.openHistory());
+    mk('🌐', 'World affairs & diplomacy', () => this.openWorld());
     mk('📊', 'World statistics', () => this.openStats());
     mk('⚖️', 'World laws', () => this.openLaws());
     this.modeBtn = mk('🗺️', 'Map mode', () => this.cycleMode());
@@ -280,7 +287,10 @@ export class UI {
     for (const k of g.kingdoms) wars += k.wars;
     wars /= 2;
     const maxEra = g.kingdoms.reduce((m, k) => Math.max(m, k.era), -1);
-    this.yearEl.innerHTML = `Year ${g.year}<small>${maxEra >= 0 ? eraName(maxEra) : 'Uninhabited'}${wars ? ` · ⚔ ${wars}` : ''}</small>`;
+    let warheads = 0;
+    for (const k of g.kingdoms) warheads += k.warheads;
+    const doom = doomsday(g);
+    this.yearEl.innerHTML = `Year ${g.year}<small>${maxEra >= 0 ? eraName(maxEra) : 'Uninhabited'}${wars ? ` · ⚔ ${wars}` : ''}${warheads ? ` · <span style="color:${doom < 5 ? '#ff6a5a' : '#ffcf4a'}">☢ ${warheads}</span>` : ''}</small>`;
     this.statsEl.innerHTML = `👥 <b>${fmt(g.personPop)}</b> &nbsp;👑 <b>${g.kingdoms.length}</b> &nbsp;🏘 <b>${g.cities.length}</b>${g.heat > 0.3 ? ` &nbsp;🌡 <b style="color:${g.heat > 1 ? '#ff6a5a' : '#ffcf4a'}">+${(g.heat * 2).toFixed(1)}°</b>` : ''}`;
     // toasts
     while (g.toasts.length) this.showToast(g.toasts.shift()!);
@@ -365,10 +375,11 @@ export class UI {
   inspect(x: number, y: number): void {
     const g = this.app.game;
     const R = this.app.renderer;
-    let best: Unit | null = null, bd = 1.6 * 1.6;
+    const pick = Math.max(0.9, 14 / (R.cam.zoom / R.dpr));
+    let best: Unit | null = null, bd = pick * pick;
     for (const u of g.units) {
       if (u.dead || u.inBoat) continue;
-      const fy = UDEF[u.kind].flying ? 3 : 0.5;
+      const fy = UDEF[u.kind].flying ? 1.8 : 0.35;
       const dx = u.x - x, dy = u.y - fy - y;
       const d = dx * dx + dy * dy;
       if (d < bd) { bd = d; best = u; }
@@ -476,9 +487,13 @@ export class UI {
     });
   }
 
+  flag(k: Kingdom, h = 13): string {
+    return flagImg(k, this.app.game.seed, h);
+  }
+
   private kLink(k: Kingdom | null): string {
     if (!k) return '<span class="sub">None</span>';
-    return `<span class="row" data-a="kingdom" data-id="${k.id}" style="display:inline-flex;padding:0 4px"><span class="swatch" style="background:${k.css}"></span>${esc(this.app.game.kName(k))}</span>`;
+    return `<span class="row" data-a="kingdom" data-id="${k.id}" style="display:inline-flex;padding:0 4px">${this.flag(k)}${esc(this.app.game.kName(k))}</span>`;
   }
 
   unitHTML(u: Unit): string {
@@ -543,7 +558,7 @@ export class UI {
     const jobStr = jobs.map((n, i) => (n ? `${JOB_NAMES[i]} ${n}` : '')).filter(Boolean).join(' · ');
     const bstr = Object.entries(counts).map(([t, n]) => `${BLD[t].name}${n > 1 ? ' ×' + n : ''}`).join(', ');
     const loyal = Math.round(c.loyalty);
-    return `<h2><span class="swatch" style="background:${k.css}"></span>${k.capital === c ? '★ ' : ''}${esc(c.name)}</h2>
+    return `<h2>${this.flag(k)}${k.capital === c ? '★ ' : ''}${esc(c.name)}</h2>
       <div class="sub">${c.levelName} of ${this.kLink(k)} · founded year ${c.founded}</div>
       <div class="grid2">
         <div>Population</div><div>${c.members.length} / ${c.capacity}${kids ? ` (${kids} children)` : ''}</div>
@@ -572,14 +587,14 @@ export class UI {
     if (!k) return '';
     const g = this.app.game;
     const sp = SPECIES[k.species];
-    if (!k.alive) return `<h2><span class="swatch" style="background:${k.css}"></span>${esc(g.kName(k))}</h2><div class="sub">Fell in year ${k.diedYear}. Founded year ${k.founded}. Reached the ${eraName(k.era)}.</div>`;
+    if (!k.alive) return `<h2>${this.flag(k)}${esc(g.kName(k))}</h2><div class="sub">Fell in year ${k.diedYear}. Founded year ${k.founded}. Reached the ${eraName(k.era)}.</div>`;
     const cur = k.researching >= 0 ? TECHS[k.researching] : null;
     const pct = cur ? Math.min(100, (k.progress / cur.cost) * 100) : 100;
     const yrs = cur && k.researchRate > 0 ? Math.max(0, (cur.cost - k.progress) / k.researchRate) : 0;
     let rels = '';
     const others = g.kingdoms.filter(o => o !== k).map(o => ({ o, r: k.relation(o) })).sort((a, b) => (b.r.war ? 1 : 0) - (a.r.war ? 1 : 0) || a.r.opinion - b.r.opinion);
     for (const { o, r } of others.slice(0, 12)) {
-      rels += `<div class="row" data-a="kingdom" data-id="${o.id}"><span class="swatch" style="background:${o.css}"></span><span class="grow">${esc(g.kName(o))}</span>${r.war ? '<span class="tag war">War</span>' : r.ally ? '<span class="tag ally">Ally</span>' : ''}<span class="tag">${Math.round(r.opinion)}</span></div>`;
+      rels += `<div class="row" data-a="kingdom" data-id="${o.id}">${this.flag(o)}<span class="grow">${esc(g.kName(o))}</span>${r.war ? '<span class="tag war">War</span>' : r.ally ? '<span class="tag ally">Ally</span>' : ''}<span class="tag">${Math.round(r.opinion)}</span></div>`;
     }
     let cities = '';
     for (const c of k.cities.slice().sort((a, b) => b.members.length - a.members.length).slice(0, 12)) {
@@ -587,7 +602,7 @@ export class UI {
     }
     const res = k.res.map((v, i) => (v >= 1 || k.caps.extract.has(i) ? `<span>${RES_ICONS[i]} ${fmt(v)}</span>` : '')).join('');
     const opts = g.kingdoms.filter(o => o !== k && !k.atWar(o)).map(o => `<option value="${o.id}">${esc(g.kName(o))}</option>`).join('');
-    return `<h2><span class="swatch" style="background:${k.css}"></span>${esc(g.kName(k))}</h2>
+    return `<h2>${this.flag(k)}${esc(g.kName(k))}</h2>
       <div class="sub">${sp.name} · <span class="tag era">${eraName(k.era)}</span> · ${k.techCount}/${TECHS.length} techs${k.ascended ? ' · 🚀 Ascended' : ''}</div>
       <div class="grid2">
         <div>Ruler</div><div>${k.king ? `<span class="row" data-a="follow" data-id="${k.king.id}" style="display:inline-flex;padding:0 4px">👑 ${esc(k.king.name)}</span>` : '—'}</div>
@@ -603,8 +618,80 @@ export class UI {
       <h3>Resources</h3><div class="res">${res}</div>
       <h3>Diplomacy</h3><div class="list">${rels || '<div class="sub">No contact with other kingdoms</div>'}</div>
       <div class="btns">${opts ? `<select id="warTarget" class="btn">${opts}</select><button class="btn danger" data-a="war" data-id="${k.id}">⚔ Declare war</button>` : ''}${k.wars ? `<button class="btn" data-a="peace" data-id="${k.id}">🕊 Make peace</button>` : ''}</div>
+      <h3>Treaties</h3><div class="sub">${this.treatiesHTML(k)}</div>
       <h3>Cities</h3><div class="list">${cities}</div>
       ${k.capital ? `<div class="btns"><button class="btn" data-a="goto" data-x="${k.capital.x}" data-y="${k.capital.y}">🎯 Go to capital</button></div>` : ''}`;
+  }
+
+  treatiesHTML(k: Kingdom): string {
+    const g = this.app.game;
+    const parts: string[] = [];
+    const names = (f: (r: import('../sim/entities').Relation) => boolean) => g.kingdoms.filter(o => o !== k && k.rel.get(o.id) && f(k.rel.get(o.id)!)).map(o => this.flag(o, 11) + ' ' + esc(o.baseName));
+    const allies = names(r => r.ally), trade = names(r => r.trade), nap = names(r => r.nap > g.tick), war = names(r => r.war);
+    if (war.length) parts.push(`⚔ At war with: ${war.join(', ')}`);
+    if (allies.length) parts.push(`🤝 Allies: ${allies.join(', ')}`);
+    if (trade.length) parts.push(`📜 Trade: ${trade.join(', ')}`);
+    if (nap.length) parts.push(`🕊 Non-aggression: ${nap.join(', ')}`);
+    if (g.council && g.council.members.has(k.id)) parts.push(`🌐 Member of the ${esc(g.council.name)}`);
+    const ban = accord(g, 'nuclear_ban');
+    if (ban && nukeBanned(g, k)) parts.push(`☮ Signed the ${esc(ban.name)}`);
+    if (climateSigned(g, k)) parts.push(`🌱 Signed the ${esc(accord(g, 'climate')!.name)}`);
+    if (k.warheads > 0 || k.nuclearTested) parts.push(`☢ Nuclear power — ${k.warheads} warhead${k.warheads === 1 ? '' : 's'}`);
+    return parts.length ? parts.join('<br>') : 'No treaties';
+  }
+
+  openWorld(): void {
+    const render = () => {
+      const g = this.app.game;
+      const doom = doomsday(g);
+      const doomCol = doom < 3 ? '#ff4d3d' : doom < 7 ? '#ffb23d' : '#7fdc8a';
+      const mins = doom >= 10 ? Math.round(doom) : doom.toFixed(1);
+      const C = g.council;
+      const council = C ? `<div class="sub"><b>${esc(C.name)}</b> — founded year ${C.founded}, ${C.members.size} member nations, ${C.sessions} sessions held</div>
+        <div>${g.kingdoms.filter(k => C.members.has(k.id)).map(k => this.flag(k, 14)).join(' ')}</div>`
+        : '<div class="sub">Not yet founded — it forms once two nations have invented the radio.</div>';
+      const accords = g.accords.map(a => `<div class="row" style="cursor:default"><span class="grow" style="white-space:normal"><b>${a.kind === 'nuclear_ban' ? '☮' : '🌱'} ${esc(a.name)}</b> <span class="sub">(${a.founded})</span><br>
+        ${g.kingdoms.filter(k => a.signatories.has(k.id)).map(k => this.flag(k, 12)).join(' ') || '<span class="sub">no remaining signatories</span>'}
+        ${a.withdrawn.size ? `<br><span class="sub">Withdrawn: ${g.kingdoms.filter(k => a.withdrawn.has(k.id)).map(k => esc(k.baseName)).join(', ')}</span>` : ''}</span></div>`).join('') || '<div class="sub">No global accords yet.</div>';
+      const powers = nuclearPowers(g).sort((a, b) => b.warheads - a.warheads).map(k => `<div class="row" data-k="${k.id}">${this.flag(k)}<span class="grow">${esc(g.kName(k))}</span>${nukeBanned(g, k) ? '<span class="tag ally">disarming</span>' : ''}<span class="tag war">☢ ${k.warheads}</span></div>`).join('') || '<div class="sub">No nation has nuclear weapons.</div>';
+      const wars: string[] = [];
+      for (const a of g.kingdoms) for (const b of g.kingdoms) {
+        if (a.id >= b.id || !a.atWar(b)) continue;
+        const r = a.relation(b), rb = b.relation(a);
+        const yrs = Math.floor((g.tick - r.warStart) / TPY);
+        const lead = Math.abs(r.warScore - rb.warScore) < 10 ? 'stalemate' : `${esc((r.warScore > rb.warScore ? a : b).baseName)} winning`;
+        wars.push(`<div class="row" style="cursor:default">${this.flag(a)}<span class="grow">${esc(a.baseName)} ⚔ ${esc(b.baseName)} <span class="sub">— ${yrs} yr${yrs === 1 ? '' : 's'}, ${lead}</span></span>${this.flag(b)}</div>`);
+      }
+      let allies = 0, trades = 0;
+      for (const a of g.kingdoms) for (const b of g.kingdoms) { if (a.id >= b.id) continue; const r = a.rel.get(b.id); if (r?.ally) allies++; if (r?.trade) trades++; }
+      return `<h1>🌐 World affairs</h1>
+        <div style="display:flex;align-items:center;gap:14px;margin-bottom:6px">
+          <div style="font-size:30px">🕛</div>
+          <div><div style="font-size:20px;font-weight:800;color:${doomCol}">${mins} minutes to midnight</div>
+          <div class="sub">Doomsday clock — nuclear arsenals, wars between nuclear powers and climate change move it forward</div></div>
+        </div>
+        <div class="grid2">
+          <div>Nations</div><div>${g.kingdoms.length}</div>
+          <div>Wars</div><div>${wars.length}</div>
+          <div>Alliances / trade pacts</div><div>${allies} / ${trades}</div>
+          <div>Treaties signed</div><div>${g.treaties}</div>
+          <div>Nuclear detonations</div><div>${g.combatNukes} in war · ${g.stats.nukes - g.combatNukes} tests</div>
+          <div>Nuclear winter</div><div>${g.nuclearWinter > 0.3 ? `<span style="color:#9cf">${g.nuclearWinter > 3 ? 'Severe' : g.nuclearWinter > 1.2 ? 'Moderate' : 'Mild'}</span>` : 'None'}</div>
+          <div>Global warming</div><div>+${(g.heat * 2).toFixed(1)}°</div>
+        </div>
+        <h3>World Council</h3>${council}
+        <h3>Global accords</h3><div class="list">${accords}</div>
+        <h3>Nuclear powers</h3><div class="list">${powers}</div>
+        <h3>Wars</h3><div class="list">${wars.join('') || '<div class="sub">The world is at peace.</div>'}</div>`;
+    };
+    const bind = () => this.modal.querySelectorAll<HTMLElement>('[data-k]').forEach(r => r.onclick = () => {
+      const k = this.app.game.kingdomById.get(Number(r.dataset.k));
+      if (k) { this.closeModal(); this.showPanel('kingdom', k); }
+    });
+    this.openModal(render());
+    bind();
+    let t = 0;
+    this.modalRefresh = () => { if (++t % 8 === 0 && !this.modal.matches(':hover')) { const st = this.modal.scrollTop; this.modal.innerHTML = `<button class="close">✕</button>` + render(); (this.modal.querySelector('.close') as HTMLElement).onclick = () => this.closeModal(); bind(); this.modal.scrollTop = st; } };
   }
 
   tileHTML(i: number): string {
@@ -674,22 +761,21 @@ export class UI {
   }
 
   openNewWorld(): void {
-    const sizes = [
-      { name: 'Small', w: 160, h: 110 }, { name: 'Medium', w: 240, h: 160 }, { name: 'Large', w: 320, h: 220 }, { name: 'Huge', w: 420, h: 290 },
-    ];
-    const o: NewWorldOpts = { w: 240, h: 160, type: 'continents', seed: Math.floor(Math.random() * 1e9), civs: 6, animals: true, startEra: 0 };
+    const sizes = WORLD_SIZES;
+    const def = this.defaultSize;
+    const o: NewWorldOpts = { w: sizes[def].w, h: sizes[def].h, type: 'continents', seed: Math.floor(Math.random() * 1e9), civs: 8, animals: true, startEra: 0 };
     const seg = (id: string, items: string[], cur: number) => `<div class="seg" id="${id}">${items.map((s, i) => `<button data-i="${i}" class="${i === cur ? 'on' : ''}">${s}</button>`).join('')}</div>`;
     this.openModal(`<h1>🌍 New world</h1>
       <div class="form">
-        <div>Size</div>${seg('nwSize', sizes.map(s => s.name), 1)}
-        <div>Map type</div>${seg('nwType', MAP_TYPES.map(m => m.name), 0)}
-        <div>Starting civilizations</div>${seg('nwCivs', ['0', '2', '4', '6', '8', '10'], 3)}
+        <div>Size</div>${seg('nwSize', sizes.map(s => `${s.name} <small>${s.w}×${s.h}</small>`), def)}
+        <div>Map type</div>${seg('nwType', MAP_TYPES.map(m => m.name), MAP_TYPES.findIndex(m => m.key === 'continents'))}
+        <div>Starting civilizations</div>${seg('nwCivs', ['0', '2', '4', '6', '8', '12', '16'], 4)}
         <div>Starting era</div><select id="nwEra">${ERAS.map((e, i) => `<option value="${i}">${e.name}</option>`).join('')}</select>
         <div>Wildlife</div><div><div class="switch on" id="nwAnimals"></div></div>
         <div>Seed</div><input type="number" id="nwSeed" value="${o.seed}">
       </div>
       <div class="btns"><button class="btn primary" id="nwGo">Create world</button><button class="btn" id="nwBack">Cancel</button></div>
-      <div class="sub" style="margin-top:8px">Tip: Huge worlds with many civilizations are demanding on phones.</div>`);
+      <div class="sub" style="margin-top:8px">🌍 Earth uses real coastlines, mountain ranges and climate zones (Natural Earth data). Bigger worlds hold more nations and people. Huge worlds are demanding on phones — the population limit adapts to the size (change it in World laws).</div>`);
     const m = this.modal;
     const bindSeg = (id: string, fn: (i: number) => void) => {
       const host = m.querySelector('#' + id)!;
@@ -701,7 +787,7 @@ export class UI {
     };
     bindSeg('nwSize', i => { o.w = sizes[i].w; o.h = sizes[i].h; });
     bindSeg('nwType', i => { o.type = MAP_TYPES[i].key; });
-    bindSeg('nwCivs', i => { o.civs = [0, 2, 4, 6, 8, 10][i]; });
+    bindSeg('nwCivs', i => { o.civs = [0, 2, 4, 6, 8, 12, 16][i]; });
     const an = m.querySelector('#nwAnimals') as HTMLElement;
     an.onclick = () => { o.animals = !o.animals; an.classList.toggle('on', o.animals); };
     (m.querySelector('#nwGo') as HTMLElement).onclick = () => {
@@ -740,10 +826,10 @@ export class UI {
       const ks = g.kingdoms.slice().sort((a, b) => b.pop - a.pop);
       let rows = '';
       for (const k of ks) {
-        rows += `<div class="row" data-k="${k.id}"><span class="swatch" style="background:${k.css}"></span><span class="grow"><b>${esc(g.kName(k))}</b><br><span class="sub">${SPECIES[k.species].name} · ${k.cities.length} cities · ${k.soldiers} soldiers</span></span>
+        rows += `<div class="row" data-k="${k.id}">${this.flag(k)}<span class="grow"><b>${esc(g.kName(k))}</b><br><span class="sub">${SPECIES[k.species].name} · ${k.cities.length} cities · ${k.soldiers} soldiers</span></span>
           ${k.wars ? `<span class="tag war">⚔ ${k.wars}</span>` : ''}<span class="tag era">${ERAS[k.era].short}</span><span class="tag">👥 ${k.pop}</span></div>`;
       }
-      const fallen = g.allKingdoms.filter(k => !k.alive).slice(-8).reverse().map(k => `<div class="row" data-k="${k.id}"><span class="swatch" style="background:${k.css}"></span><span class="grow sub">${esc(g.kName(k))} — fell ${k.diedYear}</span></div>`).join('');
+      const fallen = g.allKingdoms.filter(k => !k.alive).slice(-8).reverse().map(k => `<div class="row" data-k="${k.id}">${this.flag(k)}<span class="grow sub">${esc(g.kName(k))} — fell ${k.diedYear}</span></div>`).join('');
       return `<h1>👑 Kingdoms (${ks.length})</h1><div class="list">${rows || '<div class="sub">No civilizations yet. Use the Life tab to spawn people or found a village.</div>'}</div>${fallen ? `<h3>Fallen</h3><div class="list">${fallen}</div>` : ''}`;
     };
     const bind = () => this.modal.querySelectorAll<HTMLElement>('[data-k]').forEach(r => r.onclick = () => {
@@ -811,8 +897,8 @@ export class UI {
   openHistory(): void {
     let filter = 'all';
     const groups: Record<string, string[]> = {
-      war: ['war', 'peace', 'conquest', 'fall', 'revolt', 'ally', 'nuke'],
-      tech: ['era', 'tech', 'space', 'ascend', 'building'],
+      war: ['war', 'peace', 'conquest', 'fall', 'revolt', 'ally', 'nuke', 'treaty'],
+      tech: ['era', 'tech', 'space', 'ascend', 'building', 'infra'],
       world: ['disaster', 'monster', 'ruin', 'colony'],
       realm: ['kingdom', 'city', 'king', 'hero'],
     };
@@ -836,7 +922,7 @@ export class UI {
     const render = () => {
       const g = this.app.game;
       const kings = g.kingdoms.slice().sort((a, b) => b.pop - a.pop).slice(0, 8);
-      const eraRows = kings.map(k => `<div class="row"><span class="swatch" style="background:${k.css}"></span><span class="grow">${esc(g.kName(k))}</span>${k.eraYears.map((y, i) => (y !== undefined && i > 0 ? `<span class="tag" title="${ERAS[i].name}">${ERAS[i].short} ${y}</span>` : '')).join('')}</div>`).join('');
+      const eraRows = kings.map(k => `<div class="row">${this.flag(k)}<span class="grow">${esc(g.kName(k))}</span>${k.eraYears.map((y, i) => (y !== undefined && i > 0 ? `<span class="tag" title="${ERAS[i].name}">${ERAS[i].short} ${y}</span>` : '')).join('')}</div>`).join('');
       return `<h1>📊 World statistics</h1>
         <canvas id="chart" width="700" height="200" style="width:100%;height:200px;background:rgba(0,0,0,.2);border-radius:8px"></canvas>
         <div class="sub"><span style="color:#ffcf4a">■</span> population &nbsp; <span style="color:#6cf">■</span> kingdoms ×20 &nbsp; <span style="color:#9f6">■</span> most advanced era</div>
@@ -897,7 +983,7 @@ export class UI {
     const rows = toggles.map(([k, n, d]) => `<div class="law"><div><b>${n}</b><div class="d">${d}</div></div><div class="switch ${L[k] ? 'on' : ''}" data-law="${String(k)}"></div></div>`).join('');
     this.openModal(`<h1>⚖️ World laws</h1>${rows}
       <div class="law"><div><b>Research speed</b><div class="d">Multiplier on all research</div></div><div class="seg" id="lawRs">${[0.5, 1, 2, 4].map(v => `<button data-v="${v}" class="${L.researchSpeed === v ? 'on' : ''}">${v}×</button>`).join('')}</div></div>
-      <div class="law" style="flex-wrap:wrap"><div><b>Population limit</b><div class="d">Lower this on slower devices</div></div><div class="seg" id="lawPop">${[500, 1000, 2000, 3000, 4500, 6000].map(v => `<button data-v="${v}" class="${L.maxPop === v ? 'on' : ''}">${v}</button>`).join('')}</div></div>`);
+      <div class="law" style="flex-wrap:wrap"><div><b>Population limit</b><div class="d">Lower this on slower devices</div></div><div class="seg" id="lawPop">${[1000, 2000, 3500, 5000, 7500, 10000].map(v => `<button data-v="${v}" class="${L.maxPop === v ? 'on' : ''}">${v}</button>`).join('')}</div></div>`);
     this.modal.querySelectorAll<HTMLElement>('[data-law]').forEach(s => s.onclick = () => {
       const k = s.dataset.law as keyof typeof L;
       (L as any)[k] = !(L as any)[k];
@@ -921,6 +1007,10 @@ export class UI {
       <div class="sub">Spawn two or more people of the same species close together and they will found a village — or use a Village tool. Settlements gather food, chop wood, quarry stone, farm, build homes and expand their borders. Kingdoms send settlers, sail to new islands, make alliances and wage war.</div>
       <h3>Technology</h3>
       <div class="sub">Every kingdom researches its own tech tree across ten eras — Stone, Bronze, Iron, Medieval, Renaissance, Industrial, Modern, Atomic, Information and Space. Each discovery changes the world: farms, roads, ships, castles, muskets, factories, electric city lights at night, tanks, air raids, nuclear missiles and finally rockets and colony ships. Buildings are rebuilt in the style of each new era. Industry pollutes and warms the climate unless renewable or fusion power is discovered. Use the 🧪 tech tree to watch progress or grant technologies.</div>
+      <h3>Nations & diplomacy</h3>
+      <div class="sub">Nations sign trade agreements, non-aggression pacts and alliances, and end wars with named peace treaties where the loser can cede cities and pay reparations. Once radio is invented they found a World Council that brokers peace. Atomic powers test bombs and build arsenals; deterrence keeps most wars conventional, but a desperate nation may strike first and be answered in kind, causing nuclear winter. The council can pass a nuclear weapons ban that disarms its signatories, and a climate accord that cuts pollution. Open 🌐 World affairs to follow it all, including the doomsday clock.</div>
+      <h3>Cities & roads</h3>
+      <div class="sub">After the Wheel, towns lay out street grids and build in city blocks. Nations connect their cities with roads, then railways in the Industrial Age and paved highways in the Modern Age.</div>
       <h3>Map modes</h3>
       <div class="sub">🗺️ cycles normal, political, technology-era and pollution maps.</div>`);
   }

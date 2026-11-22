@@ -181,3 +181,4 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
   #cats button { height: 36px; flex-direction: row; gap: 4px; }
   .speed button { min-width: 30px; padding: 0 5px; }
 }
+img.flag { image-rendering: pixelated; border-radius: 2px; vertical-align: middle; flex: 0 0 auto; box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35); }

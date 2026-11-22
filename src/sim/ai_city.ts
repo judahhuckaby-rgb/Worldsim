@@ -2,12 +2,25 @@
 import type { Game } from './game';
 import { City, Building, Unit } from './entities';
 import { UK, JOB, TPY, ADULT_AGE, SOLDIERS, BLD, BldDef, BLD_KEYS, houseCapacity, buildingMaxHp } from './defs';
-import { T, F, TER, RES, NUM_RES, isTree } from './terrain';
+import { T, F, TER, RES, NUM_RES, isTree, isRoad } from './terrain';
 import { SPECIES } from './species';
 import { TECH_BY_ID } from './tech';
 import { refreshStats } from './ai_units';
 
 const DT = 20;
+// per-year rates by era: births per person, child and adult mortality
+const BIRTH = [0.04, 0.042, 0.042, 0.043, 0.044, 0.046, 0.044, 0.04, 0.035, 0.032];
+const CHILD_MORT = [0.028, 0.025, 0.022, 0.02, 0.015, 0.009, 0.004, 0.002, 0.0012, 0.0008];
+const ADULT_MORT = [0.012, 0.011, 0.01, 0.009, 0.007, 0.005, 0.003, 0.002, 0.0015, 0.001];
+
+/** Street grid: every 5th row/column (offset from the town center) is a street. */
+export function onGrid(c: City, x: number, y: number): boolean {
+  const gx = Math.floor(c.x) + 2, gy = Math.floor(c.y) + 2;
+  return (((x - gx) % 5) + 5) % 5 === 0 || (((y - gy) % 5) + 5) % 5 === 0;
+}
+export function devRadius(c: City): number {
+  return Math.max(5, 3 + Math.sqrt(c.buildings.length) * 2.4);
+}
 
 export function updateCity(g: Game, c: City): void {
   const k = c.kingdom;
@@ -25,7 +38,8 @@ export function updateCity(g: Game, c: City): void {
 
   // --- food
   const eat = (pop * DT) / TPY;
-  let passive = ((1.5 + pop * 0.22) * DT / TPY) * caps.foodMult;
+  const winter = Math.max(0.35, 1 - g.nuclearWinter * 0.07);
+  let passive = ((1.5 + pop * 0.22) * DT / TPY) * caps.foodMult * winter;
   if (c.has('docks')) passive += (4 * DT / TPY) * caps.foodMult;
   c.food += passive - eat;
   const foodCap = 60 + pop * 6;
@@ -41,8 +55,8 @@ export function updateCity(g: Game, c: City): void {
 
   // --- passive production
   const yr = DT / TPY;
-  k.res[RES.WOOD] += 0.4 * yr;
-  k.res[RES.STONE] += 0.3 * yr;
+  k.res[RES.WOOD] += 0.8 * yr;
+  k.res[RES.STONE] += 0.6 * yr;
   for (const b of c.buildings) {
     if (b.progress < 1) continue;
     switch (b.type) {
@@ -60,12 +74,36 @@ export function updateCity(g: Game, c: City): void {
     }
   }
 
-  // --- capacity & growth
+  // --- crops ripen in the fields
+  const grow = 4 * winter * (c.starving ? 1.2 : 1);
+  const W = g.world;
+  for (let fi = 0; fi < c.farms.length; fi++) {
+    const t = c.farms[fi];
+    const old = W.fstate[t];
+    if (old >= 255) continue;
+    const nv = Math.min(255, old + grow + g.rng.next() * 2);
+    W.fstate[t] = nv;
+    if ((old >> 6) !== (nv >> 6)) W.mark(t);
+  }
+
+  // --- capacity, births and deaths (demographic transition through the eras)
   c.capacity = g.cityCapacity(c);
   let adults = 0;
-  for (const u of c.members) if (u.ageT >= ADULT_AGE * TPY) adults++;
-  if (pop < Math.min(c.capacity, 160) && c.food > pop * 0.5 + 4 && adults >= 2 && g.personPop < g.laws.maxPop && !c.starving) {
-    const rate = (0.3 + pop * 0.042) * sp.breed * caps.growthMult * yr;
+  const era = k.era;
+  const childMort = CHILD_MORT[era] * (1 - caps.plagueResist * 0.4) * (c.starving ? 3 : 1) * yr;
+  const adultMort = ADULT_MORT[era] * (c.starving ? 2 : 1) * yr;
+  for (let mi = c.members.length - 1; mi >= 0; mi--) {
+    const u = c.members[mi];
+    const child = u.ageT < ADULT_AGE * TPY;
+    if (!child) adults++;
+    if (g.laws.oldAge && !u.isKing && g.rng.next() < (child ? childMort : adultMort)) g.killUnit(u, null, null, 'illness');
+  }
+  const cityCap = 120 + era * 15;
+  // near the world population limit, small towns keep growing while big cities level off
+  const fill = g.personPop / g.laws.maxPop;
+  const roomInWorld = fill < 1 || (fill < 1.06 && pop < 40);
+  if (pop < Math.min(c.capacity, cityCap) && c.food > pop * 0.5 + 4 && adults >= 2 && roomInWorld && !c.starving) {
+    const rate = (0.25 + pop * BIRTH[era]) * sp.breed * caps.growthMult * yr * (pop < 40 ? 1 : Math.max(0.1, 1 - Math.pow(fill, 6)));
     if (g.rng.chance(Math.min(0.9, rate))) {
       const homes = c.buildings.filter(b => b.type === 'house' && b.progress >= 1);
       const h = homes.length ? homes[g.rng.int(homes.length)] : c.center;
@@ -82,6 +120,7 @@ export function updateCity(g: Game, c: City): void {
   if (caps.farms && c.t2 % 2 === 1) planFarms(g, c);
   if (c.t2 % 5 === 0) restyle(g, c);
   if (c.t2 % 4 === 2) roads(g, c);
+  if (caps.roads >= 1) streets(g, c);
   if (c.t2 % 5 === 1) loyalty(g, c);
   // rebuild a destroyed town center
   if (!c.center && c.t2 % 6 === 0) {
@@ -285,17 +324,36 @@ function footprintFree(g: Game, c: City, x: number, y: number, w: number, h: num
   return true;
 }
 
+function inBlock(g: Game, c: City, x: number, y: number, w: number, h: number): boolean {
+  const W = g.world;
+  for (let dy = 0; dy < h; dy++) for (let dx = 0; dx < w; dx++) {
+    if (onGrid(c, x + dx, y + dy)) return false;
+    if (W.inb(x + dx, y + dy) && isRoad(W.ter[(y + dy) * W.w + x + dx])) return false;
+  }
+  return true;
+}
+
 function findSpot(g: Game, c: City, def: BldDef): { x: number; y: number } | null {
   const W = g.world;
   const R = 4 + Math.sqrt(c.tiles.length / 3.14);
+  const grid = c.kingdom.caps.roads >= 1 && def.place !== 'coast' && def.place !== 'mine' && def.w <= 4 && def.h <= 4;
+  const gx = Math.floor(c.x) + 2, gy = Math.floor(c.y) + 2;
   let best: { x: number; y: number } | null = null;
   let bs = -1e9;
-  for (let tries = 0; tries < 70; tries++) {
+  for (let tries = 0; tries < 90; tries++) {
     const ang = g.rng.next() * Math.PI * 2;
     const rr = 2.5 + Math.sqrt(g.rng.next()) * R;
-    const x = Math.round(c.x + Math.cos(ang) * rr - def.w / 2);
-    const y = Math.round(c.y + Math.sin(ang) * rr - def.h / 2);
-    if (!footprintFree(g, c, x, y, def.w, def.h)) continue;
+    let x = Math.round(c.x + Math.cos(ang) * rr - def.w / 2);
+    let y = Math.round(c.y + Math.sin(ang) * rr - def.h / 2);
+    if (grid) {
+      // snap into a city block, flush against a street
+      const bxI = Math.floor((x - gx) / 5), byI = Math.floor((y - gy) / 5);
+      const slackX = 4 - def.w, slackY = 4 - def.h;
+      x = gx + bxI * 5 + 1 + (g.rng.chance(0.5) ? 0 : slackX);
+      y = gy + byI * 5 + 1 + (g.rng.chance(0.5) ? 0 : slackY);
+      if (!inBlock(g, c, x, y, def.w, def.h)) continue;
+    }
+    if (!footprintFree(g, c, x, y, def.w, def.h, grid)) continue;
     const cx = x + def.w / 2, cy = y + def.h / 2;
     const d = Math.hypot(cx - c.x, cy - c.y);
     let score = -d;
@@ -334,31 +392,44 @@ function planConstruction(g: Game, c: City): void {
   const room = c.capacity - pop;
   const tryBuild = (key: string): boolean => {
     const def = BLD[key];
-    const { cost, mult } = costFor(def, k.era);
-    if (!afford(k, cost, mult)) return false;
+    let { cost, mult } = costFor(def, k.era);
+    if (!afford(k, cost, mult)) {
+      // treeless lands build homes from mud brick and stone instead of timber
+      if (key !== 'house') return false;
+      cost = [0, cost[0] + cost[1], cost[2], 0, 0, 0, 0];
+      if (!afford(k, cost, mult)) return false;
+    }
     const spot = findSpot(g, c, def);
     if (!spot) return false;
     pay(k, cost, mult);
     const b = g.placeBuilding(c, def, spot.x, spot.y, false);
-    if (caps.roads >= 1) buildRoad(g, c, b);
+    if (caps.roads >= 1 && (def.place === 'coast' || def.place === 'mine')) buildRoad(g, c, b);
     return true;
   };
-  if (room < 3 + Math.floor(pop / 20) && c.count('house') < BLD.house.max && pop < 160) {
+  const cityCap = 120 + k.era * 15;
+  if (room < 3 + Math.floor(pop / 20) && c.count('house') < BLD.house.max && pop < cityCap) {
     if (tryBuild('house')) return;
   }
   if (g.rng.chance(0.5)) {
+    let attempts = 0;
     for (const key of SPECIAL_ORDER) {
       const def = BLD[key];
       if (!caps.buildings.has(key)) continue;
       if (c.count(key) >= def.max) continue;
-      if (pop < def.minPop) continue;
+      const national = key === 'silo' || key === 'spaceport' || key === 'airbase' || key === 'lab';
+      if (national) {
+        // national projects are built in the capital, sized by the whole nation
+        if (k.capital !== c || k.pop < def.minPop * 2) continue;
+      } else if (pop < def.minPop * 0.7) continue;
       if (key === 'tower' && c.count('tower') >= Math.min(def.max, 1 + Math.floor(pop / 25))) continue;
-      if ((key === 'silo' || key === 'spaceport' || key === 'airbase' || key === 'lab') && k.capital !== c && pop < def.minPop * 1.5) continue;
+      if ((c.skip.get(key) || 0) > g.tick) continue;
       if (tryBuild(key)) return;
-      break;
+      // can't afford or place this one yet: shelve it for a few years and consider the next project
+      c.skip.set(key, g.tick + TPY * (3 + g.rng.int(4)));
+      if (++attempts >= 3) break;
     }
   }
-  if (room < 6 && pop < 160 && g.rng.chance(0.5)) tryBuild('house');
+  if (room < 6 && pop < cityCap && g.rng.chance(0.5)) tryBuild('house');
 }
 
 function buildRoad(g: Game, c: City, b: Building): void {
@@ -388,9 +459,6 @@ function buildRoad(g: Game, c: City, b: Building): void {
 function roads(g: Game, c: City): void {
   const k = c.kingdom;
   if (k.caps.roads < 1 || !c.center || c.buildings.length === 0) return;
-  c.roadDone = (c.roadDone + 1) % c.buildings.length;
-  const b = c.buildings[c.roadDone];
-  if (b && b !== c.center && b.progress >= 1) buildRoad(g, c, b);
   if (k.caps.roads >= 2) {
     const W = g.world;
     let n = 0;
@@ -398,6 +466,49 @@ function roads(g: Game, c: City): void {
       const i = c.tiles[g.rng.int(c.tiles.length)];
       if (W.ter[i] === T.ROAD) { W.setTer(i, T.PAVED); n++; }
     }
+  }
+}
+
+/** Lay out the street grid, growing outward from the town center a few tiles at a time. */
+function streets(g: Game, c: City): void {
+  const W = g.world;
+  const k = c.kingdom;
+  if (!c.center) return;
+  const R = devRadius(c) + 1.5;
+  const cand: number[] = [];
+  const b = c.center;
+  for (let y = b.y - 1; y <= b.y + b.h; y++) for (let x = b.x - 1; x <= b.x + b.w; x++) {
+    if (W.inb(x, y) && onGrid(c, x, y)) cand.push(y * W.w + x);
+  }
+  for (let s = 0; s < 40 && c.tiles.length; s++) {
+    const i = c.tiles[g.rng.int(c.tiles.length)];
+    if (!isRoad(W.ter[i])) continue;
+    const x = i % W.w, y = (i / W.w) | 0;
+    if (x > 0 && onGrid(c, x - 1, y)) cand.push(i - 1);
+    if (x < W.w - 1 && onGrid(c, x + 1, y)) cand.push(i + 1);
+    if (y > 0 && onGrid(c, x, y - 1)) cand.push(i - W.w);
+    if (y < W.h - 1 && onGrid(c, x, y + 1)) cand.push(i + W.w);
+  }
+  const valid = cand.filter(i => {
+    if (W.owner[i] !== c.id || W.bld[i]) return false;
+    const t = W.ter[i];
+    if (isRoad(t) || !(TER[t].build || t === T.FARM)) return false;
+    const x = i % W.w, y = (i / W.w) | 0;
+    return Math.hypot(x + 0.5 - c.x, y + 0.5 - c.y) <= R;
+  });
+  valid.sort((a, b2) => {
+    const ax = a % W.w, ay = (a / W.w) | 0, bx = b2 % W.w, by = (b2 / W.w) | 0;
+    return Math.hypot(ax - c.x, ay - c.y) - Math.hypot(bx - c.x, by - c.y);
+  });
+  let laid = 0;
+  for (const i of valid) {
+    if (laid >= 2) break;
+    if (isRoad(W.ter[i])) continue;
+    if (k.res[RES.WOOD] < 0.3) break;
+    k.res[RES.WOOD] -= 0.3;
+    W.setTer(i, k.caps.roads >= 2 ? T.PAVED : T.ROAD);
+    if (W.flora[i] !== F.NONE) W.setFlora(i, F.NONE);
+    laid++;
   }
 }
 
@@ -418,7 +529,8 @@ function planFarms(g: Game, c: City): void {
     if (W.bld[i] || t === T.FARM || t === T.ROAD || t === T.PAVED || !TER[t].build || TER[t].fert < 0.3 || t === T.HILLS) continue;
     const x = i % W.w, y = (i / W.w) | 0;
     const d = Math.hypot(x + 0.5 - c.x, y + 0.5 - c.y);
-    if (d < 3) continue;
+    const core = c.kingdom.caps.roads >= 1 ? devRadius(c) + 1 : 3;
+    if (d < core) continue;
     let adj = 0, nearB = false;
     for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
       if (!W.inb(x + dx, y + dy)) continue;
@@ -428,7 +540,7 @@ function planFarms(g: Game, c: City): void {
     }
     if (nearB) continue;
     if (c.farms.length > 0 && adj === 0 && g.rng.chance(0.75)) continue;
-    if (d > 4 + Math.sqrt(c.tiles.length) * 0.6) continue;
+    if (d > core + 2 + Math.sqrt(c.tiles.length) * 0.6) continue;
     W.biome[i] = TER[t].elev === 4 && t !== T.ASH && t !== T.WASTE ? t : W.biome[i];
     W.setTer(i, T.FARM);
     W.fstate[i] = g.rng.int(100);
@@ -492,7 +604,7 @@ function loyalty(g: Game, c: City): void {
   const cap = k.capital;
   let L = 50 + k.caps.loyalty * 0.6;
   if (cap === c) L += 60;
-  else if (cap) L -= Math.hypot(cap.x - c.x, cap.y - c.y) / 2.4;
+  else if (cap) L -= Math.hypot(cap.x - c.x, cap.y - c.y) / (3.2 + k.caps.roads * 1.4); // roads and railways knit a nation together
   if (c.conquered > 0) L -= Math.max(0, 40 - (g.year - c.conquered)) * 0.8;
   if (c.has('temple')) L += 12;
   if (c.has('castle')) L += 15;
@@ -501,12 +613,12 @@ function loyalty(g: Game, c: City): void {
   if (c.members.length) L -= (other / c.members.length) * 40;
   if (c.starving) L -= 25;
   L -= k.wars * 8;
-  L -= Math.max(0, k.cities.length - 4) * 3;
+  L -= Math.max(0, k.cities.length - 5) * 2.5 + Math.max(0, k.cities.length - 14) * 3;
   if (k.ascended) L += 40;
   c.loyalty += (L - c.loyalty) * 0.3;
-  if (g.laws.rebellions && c.loyalty < 0 && cap !== c && k.cities.length > 1 && c.members.length >= 8) {
+  if (g.laws.rebellions && c.loyalty < -10 && cap !== c && k.cities.length > 2 && c.members.length >= 12) {
     c.revoltT++;
-    if (c.revoltT > 8 && g.rng.chance(0.3)) rebel(g, c);
+    if (c.revoltT > 14 && g.rng.chance(0.15)) rebel(g, c);
   } else c.revoltT = Math.max(0, c.revoltT - 1);
 }
 

@@ -1,7 +1,7 @@
 // God powers / tools.
 import type { Game } from '../sim/game';
 import { nukeAt } from '../sim/game';
-import { T, F, TER, treeFor, isTree } from '../sim/terrain';
+import { T, F, TER, treeFor, isTree, isRoad } from '../sim/terrain';
 import { UK, UDEF, TPY } from '../sim/defs';
 import { SPECIES } from '../sim/species';
 import { startDisaster, spawnMeteor, alienInvasion, plagueOutbreak } from '../sim/disasters';
@@ -134,7 +134,7 @@ export const TOOLS: Tool[] = [
   {
     id: 'trees', cat: 'terrain', name: 'Forest', icon: '🌳', mode: 'spray', interval: 60, desc: 'Plant trees', apply: (g, x, y, r) => forBrush(g, x, y, r, i => {
       const w = g.world;
-      if (Math.random() < 0.5 && !w.bld[i] && w.flora[i] === F.NONE && w.ter[i] !== T.FARM && w.ter[i] !== T.ROAD && w.ter[i] !== T.PAVED) { const f = treeFor(w.ter[i]); if (f) w.setFlora(i, f); }
+      if (Math.random() < 0.5 && !w.bld[i] && w.flora[i] === F.NONE && w.ter[i] !== T.FARM && !isRoad(w.ter[i])) { const f = treeFor(w.ter[i]); if (f) w.setFlora(i, f); }
     }),
   },
   { id: 'flowers', cat: 'terrain', name: 'Flowers & Berries', icon: '🌼', mode: 'spray', interval: 60, desc: 'Grow bushes and flowers', apply: (g, x, y, r) => forBrush(g, x, y, r, i => { const w = g.world; if (Math.random() < 0.4 && w.flora[i] === F.NONE && !w.bld[i] && TER[w.ter[i]].fert > 0.2 && w.ter[i] !== T.FARM) w.setFlora(i, Math.random() < 0.5 ? F.BUSH : F.FLOWER); }) },

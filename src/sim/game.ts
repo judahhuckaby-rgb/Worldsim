@@ -12,6 +12,8 @@ import { updateCity } from './ai_city';
 import { updateKingdom } from './ai_kingdom';
 import { updateDisasters, Disaster, randomDisaster } from './disasters';
 import { environmentTick } from './environment';
+import { updateWorldPolitics, Council, Accord, climateSigned } from './politics';
+import { pruneLinks } from './infra';
 
 export interface Laws {
   research: boolean;
@@ -27,6 +29,12 @@ export interface Laws {
   maxPop: number;
   researchSpeed: number;
   startEra: number;
+}
+
+/** Population limit that suits a world of n tiles. */
+export function suggestedMaxPop(n: number, mobile = false): number {
+  const v = Math.round((n / 38) * (mobile ? 0.8 : 1) / 250) * 250;
+  return Math.max(1500, Math.min(9000, v));
 }
 
 export function defaultLaws(): Laws {
@@ -103,9 +111,11 @@ class Spatial {
       if (cy < 0) cy = 0; else if (cy >= ch) cy = ch - 1;
       const ci = cy * cw + cx;
       cells[ci].push(u);
-      if (u.kind !== 0 || u.madT > 0 || (u.kingdom !== null && u.kingdom.warCount > 0)) {
+      if (u.madT > 0) danger[ci] = 1;
+      else if (u.kind === 0) { if (u.job === 6 && u.kingdom !== null && u.kingdom.warCount > 0) danger[ci] = 1; }
+      else {
         const d = UDEF[u.kind];
-        if (d.monster || d.pred || u.madT > 0 || u.kingdom !== null) danger[ci] = 1;
+        if (d.monster || d.pred || (u.kingdom !== null && u.kingdom.warCount > 0)) danger[ci] = 1;
       }
     }
   }
@@ -173,6 +183,14 @@ export class Game {
   popHistory: { year: number; pop: number; kingdoms: number; maxEra: number }[] = [];
   headless = false;
   stats = { births: 0, deaths: 0, wars: 0, nukes: 0, citiesFounded: 0 };
+  council: Council | null = null;
+  accords: Accord[] = [];
+  nuclearWinter = 0;
+  combatNukes = 0;
+  lastNukeYear = -1;
+  nukeFreeAnnounced = false;
+  treaties = 0;
+  lastTopo = -9999;
 
   constructor(world: World, seed: number) {
     this.world = world;
@@ -411,6 +429,10 @@ export class Game {
     u.hp = 0;
     this.kindCount[u.kind]--;
     if (u.kind === UK.PERSON) this.stats.deaths++;
+    if (src && src.kingdom && u.kingdom && src.kingdom !== u.kingdom && u.kind === UK.PERSON) {
+      const r = src.kingdom.rel.get(u.kingdom.id);
+      if (r && r.war) r.warScore += u.job === 6 ? 0.6 : 0.25;
+    }
     if (src && !src.dead) {
       src.kills++;
       src.xp++;
@@ -640,7 +662,7 @@ export class Game {
     for (let dy = 0; dy < def.h; dy++) for (let dx = 0; dx < def.w; dx++) {
       const i = (y + dy) * w.w + x + dx;
       w.bld[i] = b.id;
-      if (w.ter[i] === T.FARM || w.ter[i] === T.ROAD || w.ter[i] === T.PAVED) {
+      if (w.ter[i] === T.FARM || w.ter[i] === T.ROAD || w.ter[i] === T.PAVED || w.ter[i] === T.RAIL) {
         w.setTer(i, w.landFor(i));
         const fi = c.farms.indexOf(i);
         if (fi >= 0) c.farms.splice(fi, 1);
@@ -703,9 +725,10 @@ export class Game {
     c.capacity = this.cityCapacity(c);
   }
 
-  captureCity(c: City, k: Kingdom): void {
+  captureCity(c: City, k: Kingdom, ceded = false, union = false): void {
     const old = c.kingdom;
     if (old === k) return;
+    if (!ceded) { const r = k.relation(old); r.warScore += 30; }
     const oi = old.cities.indexOf(c);
     if (oi >= 0) old.cities.splice(oi, 1);
     k.cities.push(c);
@@ -732,11 +755,15 @@ export class Game {
     for (const b of c.buildings) b.style = Math.min(b.style, k.era);
     for (const i of c.tiles) this.world.mark(i);
     for (const i of c.tiles) this.world.markN(i);
-    this.log(`${this.kName(k)} conquered ${c.name} from ${this.kName(old)}`, 'conquest', c.x, c.y, k.css, true);
+    if (!ceded) {
+      this.log(`${this.kName(k)} conquered ${c.name} from ${this.kName(old)}`, 'conquest', c.x, c.y, k.css, true);
+      k.res[RES.GOLD] += Math.floor(old.res[RES.GOLD] * 0.2);
+    }
     const r = old.relation(k);
-    r.memory += 30;
-    k.res[RES.GOLD] += Math.floor(old.res[RES.GOLD] * 0.2);
-    if (old.cities.length === 0) this.destroyKingdom(old, k);
+    r.memory += ceded ? 15 : 30;
+    pruneLinks(this, old);
+    if (old.infra && old.infra.key.includes(String(c.id))) old.infra = null;
+    if (old.cities.length === 0) this.destroyKingdom(old, k, union);
   }
 
   destroyCity(c: City, reason: string): void {
@@ -772,7 +799,7 @@ export class Game {
     if (k.cities.length === 0 && k.alive) this.destroyKingdom(k, null);
   }
 
-  destroyKingdom(k: Kingdom, by: Kingdom | null): void {
+  destroyKingdom(k: Kingdom, by: Kingdom | null, union = false): void {
     if (!k.alive) return;
     k.alive = false;
     k.diedYear = this.year;
@@ -783,7 +810,8 @@ export class Game {
       if (r) { r.war = false; r.ally = false; }
     }
     for (const u of this.units) if (u.kingdom === k) { u.kingdom = by; if (!by) { u.order = null; if (u.job === 6) { u.job = 0; u.sclass = -1; } } }
-    this.log(by ? `${this.kName(k)} has fallen to ${this.kName(by)}` : `${this.kName(k)} has collapsed`, 'fall', -1, -1, k.css, true);
+    if (union && by) this.log(`🤝 ${this.kName(k)} peacefully united with ${this.kName(by)}`, 'treaty', by.capital ? by.capital.x : -1, by.capital ? by.capital.y : -1, by.css, true);
+    else this.log(by ? `${this.kName(k)} has fallen to ${this.kName(by)}` : `${this.kName(k)} has collapsed`, 'fall', -1, -1, k.css, true);
   }
 
   declareWar(a: Kingdom, b: Kingdom, reason = ''): void {
@@ -812,7 +840,7 @@ export class Game {
     }
   }
 
-  makePeace(a: Kingdom, b: Kingdom): void {
+  makePeace(a: Kingdom, b: Kingdom, note = ''): void {
     const ra = a.relation(b), rb = b.relation(a);
     if (!ra.war) return;
     ra.war = rb.war = false;
@@ -820,7 +848,31 @@ export class Game {
     ra.opinion = Math.max(ra.opinion, -10);
     rb.opinion = Math.max(rb.opinion, -10);
     for (const u of this.units) if (u.order && u.order.city && ((u.kingdom === a && u.order.city.kingdom === b) || (u.kingdom === b && u.order.city.kingdom === a))) u.order = null;
-    this.log(`☮ ${this.kName(a)} and ${this.kName(b)} signed a peace treaty`, 'peace', -1, -1, '#9f9', true);
+    this.treaties++;
+    // peace terms: the clear loser cedes a border city and pays reparations
+    const diff = ra.warScore - rb.warScore;
+    const winner = diff > 0 ? a : b, loser = diff > 0 ? b : a;
+    let terms = '';
+    if (Math.abs(diff) > 25 && loser.cities.length > 1 && winner.alive && loser.alive) {
+      let ceded: City | null = null, bd = 1e9;
+      for (const c of loser.cities) {
+        if (c === loser.capital) continue;
+        for (const wc of winner.cities) {
+          const d = Math.abs(c.x - wc.x) + Math.abs(c.y - wc.y);
+          if (d < bd) { bd = d; ceded = c; }
+        }
+      }
+      if (ceded && bd < 120) {
+        terms = ` — ${this.kName(loser)} cedes ${ceded.name}`;
+        this.captureCity(ceded, winner, true);
+      }
+      const rep = Math.floor(loser.res[RES.GOLD] * 0.3);
+      if (rep > 0) { loser.res[RES.GOLD] -= rep; winner.res[RES.GOLD] += rep; terms += terms ? ' and pays reparations' : ` — ${this.kName(loser)} pays reparations`; }
+    }
+    ra.warScore = rb.warScore = 0;
+    const place = (loser.capital || winner.capital);
+    const name = place ? `Treaty of ${place.name}` : 'a peace treaty';
+    this.log(`☮ ${this.kName(a)} and ${this.kName(b)} signed the ${name}${note ? ' ' + note : ''}${terms}`, 'peace', place ? place.x : -1, place ? place.y : -1, '#9f9', true);
   }
 
   // ------------------------------------------------------------------ setup helpers
@@ -887,7 +939,7 @@ export class Game {
       if (spot >= 0) this.spawnTribe(sp, spot % w.w, (spot / w.w) | 0, 7);
     }
     if (animals) {
-      const count = Math.floor(w.n / 500);
+      const count = Math.floor(w.n / 900);
       for (let i = 0; i < count; i++) {
         const x = this.rng.int(w.w), y = this.rng.int(w.h);
         const t = w.ter[y * w.w + x];
@@ -906,7 +958,7 @@ export class Game {
   step(): void {
     this.tick++;
     const w = this.world;
-    if (w.topoDirty && (this.tick % 5 === 0)) w.computeTopology();
+    if (w.topoDirty && this.tick - this.lastTopo >= (w.n > 150000 ? 80 : 40)) { w.computeTopology(); this.lastTopo = this.tick; }
     this.pathBudget = 24;
     if (this.tick % 2 === 0) {
       for (const k of this.kingdoms) k.warCount = k.wars;
@@ -952,6 +1004,7 @@ export class Game {
       bs.length = k;
     }
     if (this.tick % TPY === 0) {
+      updateWorldPolitics(this);
       let pop = 0;
       for (const k of this.kingdoms) {
         let kp = 0;
@@ -963,7 +1016,7 @@ export class Game {
       const maxEra = this.kingdoms.reduce((m, k) => Math.max(m, k.era), 0);
       this.popHistory.push({ year: this.year, pop, kingdoms: this.kingdoms.length, maxEra });
       if (this.popHistory.length > 2000) this.popHistory.splice(0, 1000);
-      if (this.carbon > 0) this.carbon *= 0.995;
+      if (this.carbon > 0) this.carbon *= 0.996;
     }
     if (this.shake > 0) this.shake *= 0.9;
     this.personPop = this.kindCount[UK.PERSON];
@@ -1012,9 +1065,9 @@ export class Game {
       case 'factory':
       case 'power':
       case 'airbase': {
-        const pm = k.caps.pollution * (b.type === 'power' ? 1.4 : b.type === 'airbase' ? 0.3 : 1);
+        const pm = k.caps.pollution * (b.type === 'power' ? 1.4 : b.type === 'airbase' ? 0.3 : 1) * (climateSigned(this, k) ? 0.45 : 1);
         if (pm > 0.01 && this.laws.climate) {
-          this.carbon += 0.25 * pm;
+          this.carbon += 0.008 * pm;
           for (let n = 0; n < 2; n++) {
             const tx = b.x + this.rng.int(b.w + 8) - 4, ty = b.y + this.rng.int(b.h + 8) - 4;
             if (w.inb(tx, ty)) {
@@ -1087,10 +1140,12 @@ export class Game {
   }
 }
 
-export function nukeAt(g: Game, x: number, y: number, owner: Kingdom | null): void {
+export function nukeAt(g: Game, x: number, y: number, owner: Kingdom | null, test = false): void {
   const w = g.world;
-  const R = 10;
+  const R = test ? 7 : 10;
   g.stats.nukes++;
+  g.nuclearWinter += test ? 0.15 : 1;
+  if (!test) { g.combatNukes++; g.lastNukeYear = g.year; }
   g.flash = 1;
   g.shake = 18;
   g.emit({ kind: 'nuke', x, y, r: R });
