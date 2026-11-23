@@ -244,12 +244,13 @@ function voteBan(g: Game, k: Kingdom): boolean {
  * times) by a peaceful dissolution. The breakaway half is named after its direction ("North X").
  */
 export function considerSplit(g: Game, k: Kingdom): void {
-  if (!g.laws.rebellions || k.cities.length < 9 || g.tick < k.splitCD) return;
+  const threshold = 12 + k.era * 2;
+  if (!g.laws.rebellions || k.cities.length < threshold || g.tick < k.splitCD) return;
   let loyal = 0;
   for (const c of k.cities) loyal += c.loyalty;
   loyal /= k.cities.length;
-  const stress = 1 + k.wars * 0.6 + (loyal < 25 ? 1 : 0) + (k.cities.length > 16 ? 1 : 0);
-  if (!g.rng.chance(Math.min(0.12, 0.004 * (k.cities.length - 8) * stress))) return;
+  const stress = 1 + k.wars * 0.4 + (loyal < 10 ? 1 : 0) + (k.cities.length > threshold * 1.6 ? 1 : 0);
+  if (!g.rng.chance(Math.min(0.06, 0.0015 * (k.cities.length - threshold + 1) * stress))) return;
   splitNation(g, k);
 }
 

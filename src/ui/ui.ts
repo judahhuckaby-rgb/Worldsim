@@ -37,7 +37,7 @@ export interface AppLike {
 }
 
 const SPEEDS = [1, 2, 5, 10, 20];
-const MAJOR_KINDS = new Set(['nuke', 'ascend', 'space', 'eraFirst', 'treaty', 'disaster', 'update', 'split']);
+const MAJOR_KINDS = new Set(['nuke', 'ascend', 'space', 'eraFirst', 'treaty', 'disaster', 'update', 'split', 'conquest', 'campaign', 'war', 'peace', 'fall']);
 export const WORLD_SIZES = [
   { name: 'Small', w: 256, h: 176 }, { name: 'Medium', w: 384, h: 256 }, { name: 'Large', w: 512, h: 352 }, { name: 'Huge', w: 704, h: 480 },
   { name: 'Giant', w: 960, h: 656 }, { name: 'Colossal', w: 1280, h: 880 },
@@ -1021,7 +1021,7 @@ export class UI {
     this.openModal(`<h1>⚖️ World laws</h1>${rows}
       <div class="law"><div><b>Research speed</b><div class="d">Multiplier on all research</div></div><div class="seg" id="lawRs">${[0.5, 1, 2, 4].map(v => `<button data-v="${v}" class="${L.researchSpeed === v ? 'on' : ''}">${v}×</button>`).join('')}</div></div>
       <div class="law" style="flex-wrap:wrap"><div><b>Nuclear doctrine</b><div class="d">How readily nations at war use nukes, missiles and bombers</div></div><div class="seg" id="lawNd">${['Restrained', 'Realistic', 'Trigger-happy'].map((n, v) => `<button data-v="${v}" class="${(L.nukeDoctrine ?? 1) === v ? 'on' : ''}">${n}</button>`).join('')}</div></div>
-      <div class="law" style="flex-wrap:wrap"><div><b>Population limit</b><div class="d">Lower this on slower devices</div></div><div class="seg" id="lawPop">${[1000, 2000, 3500, 5000, 7500, 10000, 14000].map(v => `<button data-v="${v}" class="${L.maxPop === v ? 'on' : ''}">${v}</button>`).join('')}</div></div>`);
+      <div class="law" style="flex-wrap:wrap"><div><b>Population limit</b><div class="d">Lower this on slower devices</div></div><div class="seg" id="lawPop">${[1500, 3000, 5000, 7500, 10000, 14000, 20000].map(v => `<button data-v="${v}" class="${L.maxPop === v ? 'on' : ''}">${v}</button>`).join('')}</div></div>`);
     this.modal.querySelectorAll<HTMLElement>('[data-law]').forEach(s => s.onclick = () => {
       const k = s.dataset.law as keyof typeof L;
       (L as any)[k] = !(L as any)[k];

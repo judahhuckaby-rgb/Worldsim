@@ -34,8 +34,8 @@ export interface Laws {
 
 /** Population limit that suits a world of n tiles. */
 export function suggestedMaxPop(n: number, mobile = false): number {
-  const v = Math.round((n / 38) * (mobile ? 0.8 : 1) / 250) * 250;
-  return Math.max(1500, Math.min(mobile ? 7000 : 11000, v));
+  const v = Math.round((n / 25) * (mobile ? 0.75 : 1) / 250) * 250;
+  return Math.max(1750, Math.min(mobile ? 9000 : 16000, v));
 }
 
 export function defaultLaws(): Laws {
@@ -866,18 +866,23 @@ export class Game {
     const winner = diff > 0 ? a : b, loser = diff > 0 ? b : a;
     let terms = '';
     if (Math.abs(diff) > 25 && loser.cities.length > 1 && winner.alive && loser.alive) {
-      let ceded: City | null = null, bd = 1e9;
-      for (const c of loser.cities) {
-        if (c === loser.capital) continue;
-        for (const wc of winner.cities) {
-          const d = Math.abs(c.x - wc.x) + Math.abs(c.y - wc.y);
-          if (d < bd) { bd = d; ceded = c; }
+      // the bigger the victory, the more border cities change hands
+      const n = Math.min(Math.abs(diff) > 120 ? 3 : Math.abs(diff) > 60 ? 2 : 1, loser.cities.length - 1);
+      const names: string[] = [];
+      for (let q = 0; q < n; q++) {
+        let ceded: City | null = null, bd = 1e9;
+        for (const c of loser.cities) {
+          if (c === loser.capital) continue;
+          for (const wc of winner.cities) {
+            const d = Math.abs(c.x - wc.x) + Math.abs(c.y - wc.y);
+            if (d < bd) { bd = d; ceded = c; }
+          }
         }
-      }
-      if (ceded && bd < 120) {
-        terms = ` — ${this.kName(loser)} cedes ${ceded.name}`;
+        if (!ceded || bd >= 140) break;
+        names.push(ceded.name);
         this.captureCity(ceded, winner, true);
       }
+      if (names.length) terms = ` — ${this.kName(loser)} cedes ${names.join(', ')}`;
       const rep = Math.floor(loser.res[RES.GOLD] * 0.3);
       if (rep > 0) { loser.res[RES.GOLD] -= rep; winner.res[RES.GOLD] += rep; terms += terms ? ' and pays reparations' : ` — ${this.kName(loser)} pays reparations`; }
     }

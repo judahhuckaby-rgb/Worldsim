@@ -188,7 +188,7 @@ export const ERA_GROWTH = 1.95;
 const lateEra = (e: number) => 1 + Math.max(0, e - 4) * 0.4;
 // From the Modern Age on, growing research output (labs, computers, AI) carries the load, so
 // per-technology costs climb gently and every age up to the Galactic stays reachable.
-const LATE_COST = [5500, 6500, 7500, 8500, 10000, 11500, 13000];
+const LATE_COST = [11000, 13000, 15000, 17000, 20000, 23000, 26000];
 function eraCost(e: number): number {
   if (e >= 6) return LATE_COST[Math.min(LATE_COST.length - 1, e - 6)];
   return BASE_COST * Math.pow(ERA_GROWTH, e) * lateEra(e);

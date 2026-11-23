@@ -81,13 +81,26 @@ export class Unit {
 }
 
 export interface Order {
-  type: number;     // 1 attack city, 2 defend, 3 settle
+  type: number;     // 1 attack city, 2 defend, 3 settle, 4 muster at a rally point
   city: City | null;
   x: number;
   y: number;
   since: number;
 }
-export const ORD = { ATTACK: 1, DEFEND: 2, SETTLE: 3 } as const;
+export const ORD = { ATTACK: 1, DEFEND: 2, SETTLE: 3, MUSTER: 4 } as const;
+
+/** A national military campaign: the army gathers near the front, then marches on one city. */
+export interface Campaign {
+  target: City;
+  rx: number;          // rally point
+  ry: number;
+  phase: number;       // 0 mustering, 1 marching / besieging
+  since: number;       // tick the current phase began
+  size: number;        // soldiers committed
+  taken: number;       // cities captured during this campaign chain
+  ax: number;          // army position (centroid), for the war map
+  ay: number;
+}
 
 export class Building {
   id: number;
@@ -250,6 +263,8 @@ export class Kingdom {
   blackoutT = 0;          // solar flare: grid down until this tick
   player = false;         // commanded by the player
   mobilizeT = 0;          // general mobilization until this tick
+  campaign: Campaign | null = null;
+  lastConquest = -99999;  // tick of the last city taken in war
 
   constructor(id: number, baseName: string, species: number, color: [number, number, number]) {
     this.id = id;

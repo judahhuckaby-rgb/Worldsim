@@ -106,6 +106,17 @@ function tileTick(g: Game, i: number): void {
   const t = w.ter[i];
   const f = w.flora[i];
   const rng = g.rng;
+  // abandoned roads: with no town left to serve, they slowly return to nature
+  if ((t === T.ROAD || t === T.PAVED || t === T.RAIL || t === T.HIGHWAY) && !w.owner[i] && rng.next() < 0.12) {
+    const x = i % w.w, y = (i / w.w) | 0;
+    let near = false;
+    for (const c of g.cities) if (Math.abs(c.x - x) + Math.abs(c.y - y) < 48) { near = true; break; }
+    if (!near) {
+      if (t === T.HIGHWAY || t === T.PAVED) w.setTer(i, T.ROAD);
+      else w.setTer(i, w.landFor(i));
+    }
+    return;
+  }
   if (t === T.FARM) {
     // crops are grown by their city (see ai_city); untended farms slowly ripen too
     if (f !== F.CROP) w.setFlora(i, F.CROP);

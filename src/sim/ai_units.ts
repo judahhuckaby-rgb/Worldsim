@@ -661,13 +661,52 @@ function jobScholar(g: Game, u: Unit): void {
   startWork(g, u, -1, b.cx + g.rng.range(-0.7, 0.7), b.y + b.h + 0.3);
 }
 
+/** Long marches go in stages so one path search never has to span a continent. */
+function march(g: Game, u: Unit, tx: number, ty: number): boolean {
+  const w = g.world;
+  const d = Math.hypot(tx - u.x, ty - u.y);
+  if (d > 55) {
+    const f = 42 / d;
+    let wx = u.x + (tx - u.x) * f, wy = u.y + (ty - u.y) * f;
+    const li = w.nearestLand(wx, wy, 6);
+    if (li >= 0) { wx = (li % w.w) + 0.5; wy = ((li / w.w) | 0) + 0.5; }
+    return goTo(g, u, wx, wy);
+  }
+  return goTo(g, u, tx, ty);
+}
+
 function jobSoldier(g: Game, u: Unit): void {
   const c = u.city!;
   const k = c.kingdom;
   const o = u.order;
+  if (o && o.type === ORD.MUSTER) {
+    // gather with the rest of the army at the rally point near the front
+    const tc = o.city;
+    if (!tc || tc.dead || !k.atWar(tc.kingdom) || g.tick - o.since > TPY * 4) { u.order = null; return; }
+    if (!u.path) {
+      if (Math.hypot(o.x - u.x, o.y - u.y) > 5) {
+        if (!march(g, u, o.x + g.rng.range(-3, 3), o.y + g.rng.range(-3, 3)) && ++u.stuck > 12) { u.order = null; u.stuck = 0; }
+      } else if (g.rng.chance(0.12)) wander(g, u, o.x, o.y, 4);
+    }
+    return;
+  }
+  if (o && o.type === ORD.DEFEND) {
+    // reinforce a city of the realm under attack
+    const tc = o.city;
+    if (!tc || tc.dead || tc.kingdom !== k || g.tick - o.since > TPY * 2) { u.order = null; return; }
+    if (Math.hypot(tc.x - u.x, tc.y - u.y) < 10) {
+      const foe = findHostile(g, u, 16);
+      if (foe) { u.tUnit = foe; return; }
+      if (g.tick - tc.lastAttacked > 150) { u.order = null; return; }
+      if (!u.path && g.rng.chance(0.3)) wander(g, u, tc.x, tc.y, 6);
+    } else if (!u.path) {
+      if (!march(g, u, tc.x + g.rng.range(-3, 3), tc.y + g.rng.range(-3, 3)) && ++u.stuck > 12) { u.order = null; u.stuck = 0; }
+    }
+    return;
+  }
   if (o && o.type === ORD.ATTACK) {
     const tc = o.city;
-    if (!tc || tc.dead || !k.atWar(tc.kingdom) || g.tick - o.since > TPY * 30) { u.order = null; return; }
+    if (!tc || tc.dead || !k.atWar(tc.kingdom) || g.tick - o.since > TPY * 15) { u.order = null; return; }
     const d = Math.hypot(tc.x - u.x, tc.y - u.y);
     if (d < 8) {
       // inside the enemy city: look for defenders first, else hit buildings
@@ -688,7 +727,7 @@ function jobSoldier(g: Game, u: Unit): void {
       const w = g.world;
       const ui = w.tileAt(u.x, u.y), ci = w.tileAt(tc.x, tc.y);
       if (ui >= 0 && ci >= 0 && w.island[ui] !== w.island[ci]) { u.order = null; return; }
-      if (!goTo(g, u, tc.x + g.rng.range(-3, 3), tc.y + g.rng.range(-3, 3))) {
+      if (!march(g, u, tc.x + g.rng.range(-3, 3), tc.y + g.rng.range(-3, 3))) {
         if (++u.stuck > 12) { u.order = null; u.stuck = 0; }
       }
     }

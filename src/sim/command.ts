@@ -73,6 +73,8 @@ export function cmdAttack(g: Game, k: Kingdom, tgt: City | null): string {
     }
   }
   if (!sent && !shipped) return 'No soldiers can reach that city (build docks to ship troops overseas, or mobilize first)';
+  // keep feeding reinforcements to this target until it falls
+  k.campaign = { target: tgt, rx: tgt.x, ry: tgt.y, phase: 1, since: g.tick, size: sent + shipped, taken: 0, ax: k.capital ? k.capital.x : tgt.x, ay: k.capital ? k.capital.y : tgt.y };
   return `⚔ ${sent + shipped} soldiers ordered to attack ${tgt.name}${shipped ? ` (${shipped} by sea)` : ''}`;
 }
 
@@ -138,7 +140,7 @@ export function cmdFoundCity(g: Game, k: Kingdom, x: number, y: number): string 
     if (!src || c.members.length > src.members.length) src = c;
   }
   if (!src) return 'You need a city of 14+ people on the same landmass';
-  const adults = src.members.filter(u => u.ageT >= 16 * TPY && u.job !== JOB.SOLDIER && !u.isKing && !u.order).slice(0, 7);
+  const adults = src.members.filter(u => u.ageT >= 16 * TPY && u.ageT < 40 * TPY && u.job !== JOB.SOLDIER && !u.isKing && !u.order).sort((a, b) => a.ageT - b.ageT).slice(0, 8);
   if (adults.length < 4) return 'Not enough free settlers in ' + src.name;
   for (const u of adults) {
     g.removeFromCity(u);

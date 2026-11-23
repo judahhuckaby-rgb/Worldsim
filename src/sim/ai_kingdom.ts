@@ -5,7 +5,7 @@ import { Kingdom, City, Unit, ORD } from './entities';
 import { UK, JOB, TPY, ADULT_AGE, SOLDIERS, SHIPS, PLANES } from './defs';
 import { TECHS, NUM_TECH, canResearch, TECH_BY_ID } from './tech';
 import { SPECIES } from './species';
-import { T, TER, RES } from './terrain';
+import { T, TER, RES, isRoad } from './terrain';
 import { refreshStats, MISSION } from './ai_units';
 import { updateInfrastructure } from './infra';
 import { nuclearPolicy, hasTech, considerSplit } from './politics';
@@ -44,7 +44,7 @@ export function updateKingdom(g: Game, k: Kingdom): void {
   if (g.laws.research) research(g, k, pop);
   for (const r of k.rel.values()) if (r.trade) k.res[RES.GOLD] += (1 + k.era * 0.3) * DT / TPY;
   diplomacy(g, k);
-  if (k.t2 % 4 === 0) wars(g, k);
+  if (k.t2 % 2 === 0) wars(g, k);
   if (k.t2 % 6 === 3) expand(g, k);
   if (k.t2 % 2 === 1) specialOps(g, k);
   updateInfrastructure(g, k);
@@ -169,16 +169,25 @@ function diplomacy(g: Game, k: Kingdom): void {
     r.memory *= 0.99;
     if (r.war) {
       if (r.trade) { r.trade = false; o.relation(k).trade = false; }
-      r.exhaustion += 1;
-      if (k.pop < k.peakPop * 0.6) r.exhaustion += 2;
-      const losing = r.warScore < o.relation(k).warScore - 20;
-      if (losing) r.exhaustion += 1.5;
+      r.exhaustion += 0.6;
+      if (k.pop < k.peakPop * 0.6) r.exhaustion += 1.5;
+      const ro = o.relation(k);
+      const losing = r.warScore < ro.warScore - 20;
+      if (losing) r.exhaustion += 1;
       const years = (g.tick - r.warStart) / TPY;
+      // a side that is still taking cities presses on; stalemates and collapses end wars
+      const oMomentum = g.tick - o.lastConquest < TPY * 5 && ro.warScore > r.warScore + 15;
+      const kMomentum = g.tick - k.lastConquest < TPY * 5 && r.warScore > ro.warScore + 15;
+      const stalemate = g.tick - Math.max(k.lastConquest, o.lastConquest, r.warStart) > TPY * 12;
+      const collapsing = k.cities.length <= 2 || k.pop < k.peakPop * 0.35;
+      let p = 0.0008 * r.exhaustion * (losing ? 1.5 : 1) * (stalemate ? 2.5 : 1);
+      if (kMomentum) p *= 0.1;
+      if (oMomentum && !o.player) p *= collapsing ? 0.5 : 0.08; // the winner refuses to stop
       if (k.player) { /* the player decides when to make peace */ }
-      else if (years > 6 && g.rng.chance(0.0012 * r.exhaustion * (losing ? 1.6 : 1))) {
+      else if (years > 8 && g.rng.chance(p)) {
         if (o.player) g.log(`🏳 ${g.kName(k)} sued for peace with your nation`, 'peace', -1, -1, '#9f9', true);
         g.makePeace(k, o);
-      } else if (years > 50 && g.rng.chance(0.05)) g.makePeace(k, o);
+      } else if (years > 60 && g.rng.chance(0.03)) g.makePeace(k, o);
     } else if (g.laws.war) {
       const napActive = r.nap > g.tick;
       if (!k.player && g.tick > r.truce && k.wars < 2 && r.opinion < (napActive ? -60 : -18) && !r.ally && k.soldiers >= 3) {
@@ -258,37 +267,171 @@ function nearestEnemyCity(g: Game, k: Kingdom, from: City, sameIslandOnly: boole
 }
 
 function wars(g: Game, k: Kingdom): void {
-  if (k.wars === 0) return;
-  const w = g.world;
-  for (const c of k.cities) {
-    const soldiers = c.members.filter(u => u.job === JOB.SOLDIER && !u.inBoat);
-    if (soldiers.length < 2) continue;
-    const idle = soldiers.filter(u => !u.order);
-    const home = Math.ceil(soldiers.length * 0.3);
-    const send = idle.length - home;
-    if (send <= 0) continue;
-    const target = nearestEnemyCity(g, k, c, true);
-    if (target && Math.hypot(target.x - c.x, target.y - c.y) < 110) {
-      for (let i = 0; i < send; i++) {
-        const u = idle[i];
-        u.order = { type: ORD.ATTACK, city: target, x: target.x, y: target.y, since: g.tick };
-        u.path = null;
-        u.phase = 0;
+  if (k.wars === 0) { k.campaign = null; return; }
+  defend(g, k);
+  campaign(g, k);
+  overseas(g, k);
+}
+
+function islandOf(g: Game, x: number, y: number): number {
+  const i = g.world.tileAt(x, y);
+  return i >= 0 ? g.world.island[i] : -1;
+}
+
+/** The next enemy city worth taking: close to our lands, weakly held, capitals preferred. */
+function pickTarget(g: Game, k: Kingdom): { target: City; staging: City } | null {
+  let best: City | null = null, stage: City | null = null, bs = 1e9;
+  for (const o of g.kingdoms) {
+    if (!k.atWar(o)) continue;
+    for (const t of o.cities) {
+      if (!t.center) continue;
+      const isl = islandOf(g, t.x, t.y);
+      let near: City | null = null, nd = 1e9;
+      for (const c of k.cities) {
+        if (islandOf(g, c.x, c.y) !== isl) continue;
+        const d = Math.hypot(c.x - t.x, c.y - t.y);
+        if (d < nd) { nd = d; near = c; }
       }
-      continue;
+      if (!near || nd > 170) continue;
+      let def = 0;
+      for (const u of t.members) if (u.job === JOB.SOLDIER) def++;
+      const score = nd + def * 0.5 - (t === o.capital ? 12 : 0) - Math.min(15, t.members.length * 0.05);
+      if (score < bs) { bs = score; best = t; stage = near; }
     }
-    // overseas invasion
-    const far = nearestEnemyCity(g, k, c, false);
+  }
+  return best && stage ? { target: best, staging: stage } : null;
+}
+
+function newCampaign(g: Game, k: Kingdom, p: { target: City; staging: City }, taken: number): void {
+  const w = g.world;
+  const t = p.target, s = p.staging;
+  const dx = t.x - s.x, dy = t.y - s.y, d = Math.hypot(dx, dy) || 1;
+  const step = Math.min(12, d * 0.4);
+  let rx = s.x + (dx / d) * step, ry = s.y + (dy / d) * step;
+  const li = w.nearestLand(rx, ry, 6);
+  if (li >= 0) { rx = (li % w.w) + 0.5; ry = ((li / w.w) | 0) + 0.5; }
+  // short hops (after taking a neighbouring city) skip the muster
+  k.campaign = { target: t, rx, ry, phase: d < 28 ? 1 : 0, since: g.tick, size: 0, taken, ax: rx, ay: ry };
+}
+
+/** Massed campaigns: the army musters near the front, marches on one city and presses on after taking it. */
+function campaign(g: Game, k: Kingdom): void {
+  let cp = k.campaign;
+  if (cp) {
+    const t = cp.target;
+    if (t.kingdom === k) {
+      k.lastConquest = g.tick;
+      k.campaign = null;
+      if (k.player) { g.log(`🏴 Your army took ${t.name} — pick the next target with ⚔ Attack`, 'conquest', t.x, t.y, k.css, true); return; }
+      const next = pickTarget(g, k);
+      if (next) newCampaign(g, k, next, cp.taken + 1);
+      cp = k.campaign;
+    } else if (t.dead || !k.atWar(t.kingdom) || g.tick - cp.since > TPY * (cp.phase === 0 ? 3 : 9)) {
+      for (const c of k.cities) for (const u of c.members) if (u.order && u.order.city === t) u.order = null;
+      k.campaign = null;
+      cp = null;
+    }
+  }
+  if (!cp) {
+    if (k.player) return; // the player chooses targets
+    const next = pickTarget(g, k);
+    if (!next) return;
+    newCampaign(g, k, next, 0);
+    cp = k.campaign!;
+  }
+  const t = cp.target;
+  const isl = islandOf(g, t.x, t.y);
+  let committed = 0, gathered = 0, sx = 0, sy = 0, sn = 0;
+  for (const c of k.cities) {
+    if (islandOf(g, c.x, c.y) !== isl) continue;
+    const sol = c.members.filter(u => u.job === JOB.SOLDIER && !u.inBoat);
+    // keep a garrison at home, a bigger one where the enemy is near
+    const keep = Math.ceil(sol.length * (g.tick - c.lastAttacked < TPY ? 0.5 : 0.2));
+    let kept = 0;
+    for (const u of sol) {
+      if (u.order) {
+        if (u.order.city === t) {
+          committed++;
+          if (Math.hypot(u.x - t.x, u.y - t.y) > 6) { sx += u.x; sy += u.y; sn++; }
+          if (cp.phase === 0 && Math.hypot(u.x - cp.rx, u.y - cp.ry) < 10) gathered++;
+        }
+        continue;
+      }
+      if (kept < keep) { kept++; continue; }
+      u.order = cp.phase === 0
+        ? { type: ORD.MUSTER, city: t, x: cp.rx, y: cp.ry, since: g.tick }
+        : { type: ORD.ATTACK, city: t, x: t.x, y: t.y, since: g.tick };
+      u.path = null;
+      u.phase = 0;
+      committed++;
+    }
+  }
+  cp.size = committed;
+  if (sn) { cp.ax = sx / sn; cp.ay = sy / sn; } else { cp.ax = t.x; cp.ay = t.y; }
+  if (cp.phase === 0 && committed > 0 && ((gathered >= committed * 0.7 && gathered >= 4) || g.tick - cp.since > TPY * 1.5)) {
+    cp.phase = 1;
+    cp.since = g.tick;
+    for (const c of k.cities) for (const u of c.members) {
+      if (u.order && u.order.type === ORD.MUSTER && u.order.city === t) {
+        u.order = { type: ORD.ATTACK, city: t, x: t.x, y: t.y, since: g.tick };
+        u.path = null;
+      }
+    }
+    if (committed >= 20) g.log(`⚔ An army of ${committed} from ${g.kName(k)} marches on ${t.name}`, 'campaign', t.x, t.y, k.css, committed >= 50);
+  }
+}
+
+/** Cities under attack call in reinforcements from nearby cities of the realm. */
+function defend(g: Game, k: Kingdom): void {
+  let handled = 0;
+  for (const c of k.cities) {
+    if (handled >= 3) break;
+    if (g.tick - c.lastAttacked > 60) continue;
+    let foes = 0;
+    g.spatial.query(c.x, c.y, 15, o => { if (o.kind === UK.PERSON && o.job === JOB.SOLDIER && o.kingdom && o.kingdom !== k && k.atWar(o.kingdom)) foes++; });
+    if (foes < 3) continue;
+    handled++;
+    let defenders = 0;
+    for (const u of c.members) if (u.job === JOB.SOLDIER && !u.order) defenders++;
+    let need = Math.ceil(foes * 1.3) - defenders;
+    const isl = islandOf(g, c.x, c.y);
+    for (const o of k.cities) {
+      if (need <= 0) break;
+      if (o === c || g.tick - o.lastAttacked < 60 || Math.hypot(o.x - c.x, o.y - c.y) > 80 || islandOf(g, o.x, o.y) !== isl) continue;
+      const free = o.members.filter(u => u.job === JOB.SOLDIER && !u.inBoat && (!u.order || u.order.type === ORD.MUSTER));
+      const send = Math.min(need, Math.floor(free.length * 0.6));
+      for (let i = 0; i < send; i++) {
+        free[i].order = { type: ORD.DEFEND, city: c, x: c.x, y: c.y, since: g.tick };
+        free[i].path = null;
+        free[i].phase = 0;
+      }
+      need -= send;
+    }
+  }
+}
+
+/** Invasions across the sea when the enemy cannot be reached by land. */
+function overseas(g: Game, k: Kingdom): void {
+  if (!g.rng.chance(0.5)) return;
+  for (const c of k.cities) {
     const docks = c.find('docks');
-    if (far && docks && k.caps.ship >= 0 && k.res[RES.WOOD] >= 10 && g.rng.chance(0.4)) {
-      const landing = landingSpot(g, docks.cx, docks.cy, far);
-      if (!landing) continue;
-      k.res[RES.WOOD] -= 10;
-      const ship = Math.max(0, Math.min(k.caps.ship, SHIPS.length - 1));
+    if (!docks || k.caps.ship < 0 || k.res[RES.WOOD] < 10) continue;
+    const idle = c.members.filter(u => u.job === JOB.SOLDIER && !u.inBoat && !u.order);
+    const send = idle.length - Math.ceil(idle.length * 0.3);
+    if (send < 3) continue;
+    const near = nearestEnemyCity(g, k, c, true);
+    if (near && k.campaign && islandOf(g, k.campaign.target.x, k.campaign.target.y) === islandOf(g, c.x, c.y)) continue;
+    const far = nearestEnemyCity(g, k, c, false);
+    if (!far || islandOf(g, far.x, far.y) === islandOf(g, c.x, c.y)) continue;
+    const landing = landingSpot(g, docks.cx, docks.cy, far);
+    if (!landing) continue;
+    k.res[RES.WOOD] -= 10;
+    const ship = Math.max(0, Math.min(k.caps.ship, SHIPS.length - 1));
+    let i = 0;
+    for (let b = 0; b < 3 && i < send; b++) {
       const boat = spawnBoat(g, k, docks.cx, docks.cy, ship, MISSION.TRANSPORT, landing.x, landing.y);
-      if (!boat) continue;
-      const cap = SHIPS[ship].cap;
-      for (let i = 0; i < Math.min(send, cap); i++) {
+      if (!boat) break;
+      for (let n = 0; n < SHIPS[ship].cap && i < send; n++, i++) {
         const u = idle[i];
         u.order = { type: ORD.ATTACK, city: far, x: far.x, y: far.y, since: g.tick };
         u.inBoat = boat;
@@ -297,8 +440,9 @@ function wars(g: Game, k: Kingdom): void {
         boat.cargo!.push(u);
       }
     }
+    if (i >= 12) g.log(`⛵ ${g.kName(k)} launched a seaborne invasion of ${far.name} with ${i} troops`, 'campaign', far.x, far.y, k.css, i >= 30);
+    return;
   }
-  void w;
 }
 
 /** Find a water tile in the same water body as (x,y) next to land near target. */
@@ -351,6 +495,13 @@ function citySiteScore(g: Game, k: Kingdom, x: number, y: number): number {
   for (const c of g.cities) if (Math.hypot(c.x - x, c.y - y) < 14) return -1e9;
   let score = 0;
   const pref = SPECIES[k.species].prefers;
+  // towns spring up along roads and highways
+  let road = 0;
+  for (let dy = -3; dy <= 3; dy++) for (let dx = -3; dx <= 3; dx++) {
+    const tx = x + dx, ty = y + dy;
+    if (w.inb(tx, ty) && isRoad(w.ter[ty * w.w + tx]) && !w.owner[ty * w.w + tx]) road++;
+  }
+  if (road) score += Math.min(14, 6 + road);
   for (let dy = -4; dy <= 4; dy++) for (let dx = -4; dx <= 4; dx++) {
     const tx = x + dx, ty = y + dy;
     if (!w.inb(tx, ty)) { score -= 2; continue; }
@@ -366,8 +517,8 @@ function citySiteScore(g: Game, k: Kingdom, x: number, y: number): number {
 }
 
 function expand(g: Game, k: Kingdom): void {
-  const maxCities = 2 + Math.floor(k.era * 1.4) + Math.floor(k.pop / 40);
-  if (k.cities.length >= Math.min(22, maxCities)) return;
+  const maxCities = 3 + Math.floor(k.era * 2) + Math.floor(k.pop / 30);
+  if (k.cities.length >= Math.min(45, maxCities)) return;
   const w = g.world;
   for (const c of k.cities) {
     if (c.members.length < 20 || c.food < 15 || !g.rng.chance(c.members.length > 90 ? 0.7 : 0.35)) continue;
@@ -384,7 +535,9 @@ function expand(g: Game, k: Kingdom): void {
       const sc = citySiteScore(g, k, x, y) - r * 0.3;
       if (sc > bs) { bs = sc; best = { x: x + 0.5, y: y + 0.5 }; }
     }
-    const settlers = c.members.filter(u => u.ageT >= ADULT_AGE * TPY && u.job !== JOB.SOLDIER && !u.order && !u.isKing).slice(0, 5);
+    // young families set out to found new towns
+    const settlers = c.members.filter(u => u.ageT >= ADULT_AGE * TPY && u.ageT < 40 * TPY && u.job !== JOB.SOLDIER && !u.order && !u.isKing)
+      .sort((a, b) => a.ageT - b.ageT).slice(0, c.members.length >= 40 ? 8 : 5);
     if (settlers.length < 3) continue;
     const docks = c.find('docks');
     // seafaring nations also colonize other continents, not only when home is full

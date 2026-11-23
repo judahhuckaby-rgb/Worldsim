@@ -71,17 +71,26 @@ function chooseTrade(g: Game, k: Kingdom, cities: City[], cap: City | null): boo
   for (const o of g.kingdoms) {
     if (o === k) continue;
     const r = k.rel.get(o.id);
-    // trade partners and friendly neighbours are linked by international roads
-    if (!r || r.war || !(r.trade || r.ally || r.opinion > -10)) continue;
+    // neighbours at peace are linked by border crossings; trade partners by longer trade roads
+    if (!r || r.war || !(r.trade || r.ally || r.opinion > -35)) continue;
     let pa: City | null = null, pb: City | null = null, bd = 1e9;
     for (const a of cities) for (const b of o.cities) {
       if (!b.center || !sameIsland(g, a, b)) continue;
       const d = Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
       if (d < bd) { bd = d; pa = a; pb = b; }
     }
-    if (pa && pb && bd < (r.trade ? 160 : 110)) {
+    if (pa && pb && bd < (r.trade || r.ally ? 170 : 120)) {
       const kk = key('t', pa, pb);
       if (!k.links.has(kk) && !o.links.has(kk) && plan(g, k, 'road', pa, pb, kk)) return true;
+      // capitals of trading nations get a direct road too, later upgraded to a motorway
+      const ca = k.capital, cb = o.capital;
+      if ((r.trade || r.ally) && ca && cb && ca.center && cb.center && sameIsland(g, ca, cb)) {
+        const dk = key('t', ca, cb);
+        const d2 = Math.abs(ca.x - cb.x) + Math.abs(ca.y - cb.y);
+        if (d2 < 220 && !k.links.has(dk) && !o.links.has(dk) && plan(g, k, 'road', ca, cb, dk)) return true;
+        const hk = key('i', ca, cb);
+        if (k.caps.roads >= 2 && has(k, 'massprod') && (k.links.has(dk) || o.links.has(dk)) && !k.links.has(hk) && !o.links.has(hk) && plan(g, k, 'highway', ca, cb, hk)) return true;
+      }
     }
   }
   return false;
@@ -162,7 +171,7 @@ export function updateInfrastructure(g: Game, k: Kingdom): void {
     if (t <= 2 || t === T.PEAK || t === T.LAVA || t === T.ICE || t === T.MOUNTAIN || w.bld[i]) continue;
     // don't pave through another nation's cities except along trade roads
     const o = w.owner[i];
-    if (o && !p.key.startsWith('t:')) {
+    if (o && !p.key.startsWith('t:') && !p.key.startsWith('i:')) {
       const c = g.cityById.get(o);
       if (c && c.kingdom !== k) continue;
     }

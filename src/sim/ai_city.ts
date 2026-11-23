@@ -34,7 +34,11 @@ export function updateCity(g: Game, c: City): void {
     if (c.emptyT > TPY * 8) g.destroyCity(c, 'abandoned and fell to ruin');
     return;
   }
-  c.emptyT = 0;
+  // a dying hamlet: its last few people move to the nearest town of the realm
+  if (pop < 4 && k.capital !== c && k.cities.length > 1 && c.food < 40) {
+    c.emptyT += DT;
+    if (c.emptyT > TPY * 12) { g.destroyCity(c, 'abandoned — its last people moved away'); return; }
+  } else c.emptyT = 0;
 
   // --- food
   const eat = (pop * DT) / TPY;
@@ -98,7 +102,7 @@ export function updateCity(g: Game, c: City): void {
     if (!child) adults++;
     if (g.laws.oldAge && !u.isKing && g.rng.next() < (child ? childMort : adultMort)) g.killUnit(u, null, null, 'illness');
   }
-  const cityCap = 120 + era * 15;
+  const cityCap = 150 + era * 30;
   // near the world population limit, small towns keep growing while big cities level off
   const fill = g.personPop / g.laws.maxPop;
   const roomInWorld = fill < 1 || (fill < 1.06 && pop < 40);
@@ -116,7 +120,7 @@ export function updateCity(g: Game, c: City): void {
 
   // urbanization: from the Industrial Age, villagers move to the capital, so great cities emerge
   const capC = k.capital;
-  if (era >= 5 && fill > 0.85 && capC && capC !== c && !capC.dead && pop > 12 && capC.members.length < Math.min(capC.capacity, cityCap) - 2 && g.rng.chance(0.25)) {
+  if (era >= 5 && fill > 0.85 && capC && capC !== c && !capC.dead && pop > 30 && capC.members.length < Math.min(capC.capacity, cityCap) - 2 && g.rng.chance(0.12)) {
     const u = c.members.find(m => m.ageT >= ADULT_AGE * TPY && m.job !== JOB.SOLDIER && !m.isKing && !m.order && !m.inBoat);
     if (u) {
       g.removeFromCity(u);
@@ -406,6 +410,28 @@ export function findSpot(g: Game, c: City, def: BldDef, outskirts = false): { x:
   return best;
 }
 
+/** Building plots facing a road anywhere in the city's lands: ribbon development along highways. */
+function roadsideSpot(g: Game, c: City, def: BldDef): { x: number; y: number } | null {
+  const W = g.world;
+  if (!c.tiles.length) return null;
+  let best: { x: number; y: number } | null = null, bs = 1e9;
+  for (let s = 0; s < 40; s++) {
+    const i = c.tiles[g.rng.int(c.tiles.length)];
+    if (!isRoad(W.ter[i])) continue;
+    const x = i % W.w, y = (i / W.w) | 0;
+    const opts = [[x + 1, y - Math.floor(def.h / 2)], [x - def.w, y - Math.floor(def.h / 2)], [x - Math.floor(def.w / 2), y + 1], [x - Math.floor(def.w / 2), y - def.h]];
+    for (const [px, py] of opts) {
+      if (!footprintFree(g, c, px, py, def.w, def.h, true)) continue;
+      let ok = true;
+      for (let dy = 0; dy < def.h && ok; dy++) for (let dx = 0; dx < def.w; dx++) if (isRoad(W.ter[(py + dy) * W.w + px + dx])) { ok = false; break; }
+      if (!ok) continue;
+      const d = Math.hypot(px - c.x, py - c.y) + g.rng.next() * 4;
+      if (d < bs) { bs = d; best = { x: px, y: py }; }
+    }
+  }
+  return best;
+}
+
 const NATIONAL = new Set(['silo', 'spaceport', 'airbase', 'lab']);
 const SPECIAL_ORDER = ['temple', 'mine', 'library', 'barracks', 'docks', 'tower', 'forge', 'market', 'university', 'hospital', 'castle', 'factory', 'power', 'lab', 'airbase', 'silo', 'spaceport', 'tower'];
 
@@ -427,6 +453,7 @@ function planConstruction(g: Game, c: City): void {
       if (!afford(k, cost, mult)) return false;
     }
     let spot = findSpot(g, c, def);
+    if (!spot && (def.place === 'near' || def.place === 'edge')) spot = roadsideSpot(g, c, def);
     if (!spot && (def.w >= 3 || def.h >= 3 || NATIONAL.has(key)) && def.place !== 'coast' && def.place !== 'mine') spot = findSpot(g, c, def, true);
     if (!spot) return false;
     pay(k, cost, mult);
@@ -434,7 +461,7 @@ function planConstruction(g: Game, c: City): void {
     if (caps.roads >= 1 && (def.place === 'coast' || def.place === 'mine')) buildRoad(g, c, b);
     return true;
   };
-  const cityCap = 120 + k.era * 15;
+  const cityCap = 150 + k.era * 30;
   if (room < 3 + Math.floor(pop / 20) && c.count('house') < BLD.house.max && pop < cityCap) {
     if (tryBuild('house')) return;
   }
@@ -602,8 +629,10 @@ function expandTerritory(g: Game, c: City): void {
         if (W.owner[j]) continue;
         if (W.ter[j] < 2) continue;
         const dist = Math.hypot(nx + 0.5 - c.x, ny + 0.5 - c.y);
-        if (dist > maxR) continue;
-        const score = dist + (W.isWater(j) ? 3 : 0) + g.rng.next();
+        // cities sprawl out along their roads
+        const onRoad = isRoad(W.ter[j]) || isRoad(W.ter[i]);
+        if (dist > maxR * (onRoad ? 1.8 : 1)) continue;
+        const score = dist * (onRoad ? 0.45 : 1) + (W.isWater(j) ? 3 : 0) + g.rng.next();
         if (score < bd) { bd = score; best = j; }
       }
     }
@@ -637,16 +666,23 @@ function loyalty(g: Game, c: City): void {
   const cap = k.capital;
   let L = 50 + k.caps.loyalty * 0.6;
   if (cap === c) L += 60;
-  else if (cap) L -= Math.hypot(cap.x - c.x, cap.y - c.y) / (3.2 + k.caps.roads * 1.4); // roads and railways knit a nation together
-  if (c.conquered > 0) L -= Math.max(0, 40 - (g.year - c.conquered)) * 0.8;
+  else if (cap) L -= Math.hypot(cap.x - c.x, cap.y - c.y) / (4 + k.caps.roads * 2 + k.era * 0.6); // roads, railways and radio knit a nation together
+  let kin = 0;
+  for (const u of c.members) if (u.species === k.species) kin++;
+  const kinShare = c.members.length ? kin / c.members.length : 1;
+  if (c.conquered > 0) L -= Math.max(0, 30 - (g.year - c.conquered)) * (0.35 + (1 - kinShare) * 0.6);
+  // occupying troops keep a conquered city in line
+  let garrison = 0;
+  for (const u of c.members) if (u.job === JOB.SOLDIER) garrison++;
+  L += Math.min(15, garrison * 1.5);
   if (c.has('temple')) L += 12;
   if (c.has('castle')) L += 15;
-  let other = 0;
-  for (const u of c.members) if (u.species !== k.species) other++;
-  if (c.members.length) L -= (other / c.members.length) * 40;
+  L -= (1 - kinShare) * 35;
   if (c.starving) L -= 25;
-  L -= k.wars * 8;
-  L -= Math.max(0, k.cities.length - 5) * 2.5 + Math.max(0, k.cities.length - 14) * 3;
+  L -= Math.min(2, k.wars) * 5;
+  // administration: modern states can govern many more cities
+  const admin = 6 + k.era * 2.5;
+  L -= Math.max(0, k.cities.length - admin) * 1.6;
   if (k.ascended) L += 40;
   c.loyalty += (L - c.loyalty) * 0.3;
   if (g.laws.rebellions && c.loyalty < -10 && cap !== c && k.cities.length > 2 && c.members.length >= 12) {

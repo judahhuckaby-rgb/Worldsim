@@ -704,7 +704,55 @@ export class Renderer {
     void art;
   }
 
+  /** War map: an arrow from each marching army to the city it is attacking. */
+  private drawCampaigns(ctx: CanvasRenderingContext2D, ox: number, oy: number, z: number): void {
+    const d = this.dpr;
+    for (const k of this.g.kingdoms) {
+      const cp = k.campaign;
+      if (!cp || cp.size < 8 || cp.target.dead) continue;
+      const tx = ox + cp.target.x * z, ty = oy + cp.target.y * z;
+      const ax = ox + (cp.phase === 0 ? cp.rx : cp.ax) * z, ay = oy + (cp.phase === 0 ? cp.ry : cp.ay) * z;
+      if (Math.max(ax, tx) < -50 || Math.min(ax, tx) > this.vw + 50 || Math.max(ay, ty) < -50 || Math.min(ay, ty) > this.vh + 50) continue;
+      const len = Math.hypot(tx - ax, ty - ay);
+      const lw = Math.max(2, Math.min(7, 1.5 + Math.sqrt(cp.size) * 0.35)) * d;
+      if (cp.phase === 1 && len > 12 * d) {
+        const ux = (tx - ax) / len, uy = (ty - ay) / len;
+        const ex = tx - ux * 10 * d, ey = ty - uy * 10 * d;
+        ctx.strokeStyle = 'rgba(0,0,0,0.45)';
+        ctx.lineWidth = lw + 2 * d;
+        ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(ex, ey); ctx.stroke();
+        ctx.strokeStyle = k.css;
+        ctx.lineWidth = lw;
+        ctx.setLineDash([lw * 2.2, lw * 1.2]);
+        ctx.lineDashOffset = -this.time * 20 * d;
+        ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(ex, ey); ctx.stroke();
+        ctx.setLineDash([]);
+        const hs = lw * 2.6;
+        ctx.fillStyle = k.css;
+        ctx.beginPath();
+        ctx.moveTo(tx - ux * 4 * d, ty - uy * 4 * d);
+        ctx.lineTo(ex - ux * hs - uy * hs * 0.8, ey - uy * hs + ux * hs * 0.8);
+        ctx.lineTo(ex - ux * hs + uy * hs * 0.8, ey - uy * hs - ux * hs * 0.8);
+        ctx.closePath(); ctx.fill();
+        ctx.strokeStyle = 'rgba(0,0,0,0.5)'; ctx.lineWidth = d; ctx.stroke();
+      }
+      const fs = Math.round(11 * d);
+      ctx.font = `800 ${fs}px system-ui, -apple-system, Segoe UI, Roboto, sans-serif`;
+      const label = `${cp.phase === 0 ? '⚑' : '⚔'} ${cp.size}`;
+      const tw = ctx.measureText(label).width;
+      ctx.fillStyle = 'rgba(10,14,24,0.75)';
+      roundRect(ctx, ax - tw / 2 - 5 * d, ay - fs * 0.8, tw + 10 * d, fs * 1.6, fs * 0.4);
+      ctx.fill();
+      ctx.strokeStyle = k.css; ctx.lineWidth = 1.5 * d; ctx.stroke();
+      ctx.fillStyle = '#fff';
+      ctx.fillText(label, ax, ay + 1);
+    }
+  }
+
   private drawLabels(ctx: CanvasRenderingContext2D, ox: number, oy: number, z: number): void {
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    this.drawCampaigns(ctx, ox, oy, z);
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     const seed = this.g.seed;

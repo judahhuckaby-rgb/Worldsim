@@ -25,7 +25,9 @@ Runs on **Windows** (Electron) and **Android** (APK, Capacitor), from one TypeSc
 **Civilization**
 - Villages gather, farm, chop, mine, build, and grow into towns, cities and metropolises with borders
 - Realistic demographics: high mortality and slow growth early, population booms after medicine and sanitation
-- Cities lay out street grids and city blocks; nations link every city to its neighbours and the capital with roads, build international roads to friendly nations, then railways and two-lane motorways, tile by tile
+- Big nations: thousands of people and dozens of cities each; from the Industrial Age villagers move to the capital, which grows into a great city; administration improves with technology so modern states hold together
+- Cities lay out street grids and city blocks; nations link every city to its neighbours and the capital with roads, open border crossings to neighbours at peace and capital-to-capital roads (later motorways) to trading partners, then railways and two-lane motorways, tile by tile
+- New towns spring up along roads and cities sprawl out along their highways; roads left with no town to serve fade back into the land
 - Dense traffic visible from far out: carts, cars, trucks, buses and hovercars (faster on highways); long steam, diesel and maglev trains
 - Settlers found new cities; ships carry colonists and armies across the sea
 - Governments evolve with the era: Tribe → Chiefdom → Kingdom → Empire → Republic → Federation → Star Union → Solar Commonwealth → Collective → Galactic Republic
@@ -34,7 +36,9 @@ Runs on **Windows** (Electron) and **Android** (APK, Capacitor), from one TypeSc
 - Every nation has its own flag; zoomed out, the map reads like a political world map
 - Trade agreements (with trade roads and gold), non-aggression pacts, alliances, border incidents, rivalries, rebellions
 - Overstretched nations split apart — civil wars or peaceful dissolutions (\"North X\" / \"South X\"); seafaring nations colonize other continents
-- Wars keep score; named peace treaties make the loser cede cities and pay reparations
+- Wars are campaigns: armies of hundreds muster near the front, march together on one city, besiege and take it, then press on to the next; threatened cities call in reinforcements; seaborne invasions cross the water
+- Wars last while one side keeps winning and end in collapse or stalemate; named peace treaties hand over up to three cities and reparations
+- War map: zoomed out, arrows show every marching army and its strength
 - A World Council forms in the Modern Age, admits nations and brokers peace
 - Modern wars are fought from the air: bomber raids from every airbase, cruise-missile salvos, and orbital kinetic strikes in the future ages
 - Nuclear powers test bombs, build arsenals and use them in wars — first strikes when losing or desperate, multi-warhead salvos, retaliation in kind; deterrence and a Nuclear doctrine law (restrained / realistic / trigger-happy) temper it
