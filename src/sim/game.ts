@@ -10,7 +10,7 @@ import { TECHS, computeCaps, START_TECHS, techIdx, eraName, NUM_TECH, ERAS } fro
 import { updateUnit, refreshStats } from './ai_units';
 import { updateCity } from './ai_city';
 import { updateKingdom } from './ai_kingdom';
-import { updateDisasters, Disaster, randomDisaster } from './disasters';
+import { updateDisasters, Disaster, randomDisaster, startFallout, asteroidImpact } from './disasters';
 import { environmentTick } from './environment';
 import { updateWorldPolitics, Council, Accord, climateSigned } from './politics';
 import { pruneLinks } from './infra';
@@ -29,6 +29,7 @@ export interface Laws {
   maxPop: number;
   researchSpeed: number;
   startEra: number;
+  nukeDoctrine: number; // 0 restrained, 1 realistic, 2 trigger-happy
 }
 
 /** Population limit that suits a world of n tiles. */
@@ -40,11 +41,11 @@ export function suggestedMaxPop(n: number, mobile = false): number {
 export function defaultLaws(): Laws {
   return {
     research: true, disasters: true, nukes: true, climate: true, dayNight: true, oldAge: true, animals: true,
-    rebellions: true, plague: true, war: true, maxPop: 3000, researchSpeed: 1, startEra: 0,
+    rebellions: true, plague: true, war: true, maxPop: 3000, researchSpeed: 1, startEra: 0, nukeDoctrine: 1,
   };
 }
 
-export const P = { ARROW: 0, SHELL: 1, BOMB: 2, MISSILE: 3, FIREBALL: 4, METEOR: 5 } as const;
+export const P = { ARROW: 0, SHELL: 1, BOMB: 2, MISSILE: 3, FIREBALL: 4, METEOR: 5, CRUISE: 6, ORBITAL: 7 } as const;
 
 export interface Projectile {
   kind: number;
@@ -192,6 +193,7 @@ export class Game {
   treaties = 0;
   lastTopo = -9999;
   worldEra = 0;
+  flareT = 0;
 
   constructor(world: World, seed: number) {
     this.world = world;
@@ -349,7 +351,7 @@ export class Game {
         if (this.rng.chance(0.85)) this.damageUnit(t, dmg, u);
         break;
       case 'laser':
-        this.emit({ kind: 'laser', x: u.x, y: u.y - (u.kind === UK.UFO ? 0 : 0.7), x2: t.x, y2: t.y - 0.5, color: u.kind === UK.UFO ? '#7dff7a' : '#ff3d6e' });
+        this.emit({ kind: 'laser', x: u.x, y: u.y - (u.kind === UK.UFO ? 0 : 0.7), x2: t.x, y2: t.y - 0.5, color: u.kind === UK.UFO ? '#7dff7a' : beamColor(u) });
         this.damageUnit(t, dmg, u);
         if (aoe > 0) this.explode(t.x, t.y, aoe, dmg * 0.4, u.kingdom, u, { fire: false });
         break;
@@ -378,7 +380,7 @@ export class Game {
         this.shoot(P.ARROW, u.x, u.y - 0.5, b.cx, b.cy, dmg * 0.5, 0, u, null);
       }
       if (s.proj === 'bullet') this.emit({ kind: 'tracer', x: u.x, y: u.y - 0.6, x2: b.cx, y2: b.cy - 0.5 });
-      if (s.proj === 'laser') this.emit({ kind: 'laser', x: u.x, y: u.y - 0.7, x2: b.cx, y2: b.cy - 0.5, color: '#ff3d6e' });
+      if (s.proj === 'laser') this.emit({ kind: 'laser', x: u.x, y: u.y - 0.7, x2: b.cx, y2: b.cy - 0.5, color: beamColor(u) });
     } else if (u.kind === UK.DRAGON) {
       this.shoot(P.FIREBALL, u.x, u.y - 1.5, b.cx, b.cy, dmg, 1.6, u, null);
       return;
@@ -400,6 +402,8 @@ export class Game {
       case P.MISSILE: speed = 0.4; arc = Math.min(40, d * 0.35); break;
       case P.FIREBALL: speed = 0.35; arc = d * 0.1; break;
       case P.METEOR: speed = 0.6; arc = 0; break;
+      case P.CRUISE: speed = 0.55; arc = Math.min(14, d * 0.12); break;
+      case P.ORBITAL: speed = 1.4; arc = 0; break;
     }
     this.projectiles.push({
       kind, sx, sy, tx, ty, x: sx, y: sy, t: 0, dur: Math.max(4, d / speed), dmg, aoe,
@@ -483,7 +487,7 @@ export class Game {
     if (b.hp <= 0) this.destroyBuilding(b, by);
   }
 
-  explode(x: number, y: number, r: number, dmg: number, owner: Kingdom | null, src: Unit | null, opts: { fire?: boolean; crater?: boolean; bld?: number; fx?: boolean } = {}): void {
+  explode(x: number, y: number, r: number, dmg: number, owner: Kingdom | null, src: Unit | null, opts: { fire?: boolean; crater?: boolean; bld?: number; fx?: boolean; air?: boolean } = {}): void {
     const w = this.world;
     this.spatial.query(x, y, r + 0.5, (u, d2) => {
       if (owner && u.kingdom === owner) return;
@@ -505,7 +509,11 @@ export class Game {
         if (bid && !seen.has(bid)) {
           seen.add(bid);
           const b = this.bldById.get(bid);
-          if (b && (!owner || b.city.kingdom !== owner)) this.damageBuilding(b, dmg * bmult, owner, src);
+          if (b && (!owner || b.city.kingdom !== owner)) {
+            // bombs and missiles can level a town hall but only ground troops can take the city
+            if (opts.air && b === b.city.center) b.hp = Math.max(1, b.hp - dmg * bmult);
+            else this.damageBuilding(b, dmg * bmult, owner, src);
+          }
         }
         if (opts.fire && this.rng.chance(0.35)) w.ignite(i, 90);
         if (opts.crater) {
@@ -970,7 +978,8 @@ export class Game {
       const isl = plan.length ? plan[i] : -1;
       let spot = this.findStartSpot(sp, isl, isl >= 0 ? boxes.get(isl)! : null);
       if (spot < 0) spot = this.findStartSpot(sp);
-      if (spot >= 0) this.spawnTribe(sp, spot % w.w, (spot / w.w) | 0, 7);
+      // worlds that start in a later age begin with bigger founding populations
+      if (spot >= 0) this.spawnTribe(sp, spot % w.w, (spot / w.w) | 0, 7 + Math.min(24, this.laws.startEra * 2));
     }
     if (animals) {
       const count = Math.floor(w.n / 900);
@@ -1020,6 +1029,7 @@ export class Game {
     }
     this.updateProjectiles();
     updateDisasters(this);
+    if (this.flareT > 0) this.flareT--;
     environmentTick(this);
     if (this.laws.disasters && this.rng.chance(1 / (TPY * 40))) randomDisaster(this);
 
@@ -1087,12 +1097,17 @@ export class Game {
         });
         if (target) {
           const t = target as Unit;
-          const dmg = [6, 18, 14, 40, 60][tier] * (b.type === 'castle' ? 1.5 : 1);
+          const dmg = [6, 18, 14, 40, 60, 95, 140][tier] * (b.type === 'castle' ? 1.5 : 1);
           if (tier === 0) this.shoot(P.ARROW, b.cx, b.y, t.x, t.y - 0.4, dmg, 0, null, t, k);
           else if (tier === 1) this.shoot(P.SHELL, b.cx, b.y, t.x, t.y, dmg, 1.2, null, null, k);
           else if (tier === 2) { this.emit({ kind: 'tracer', x: b.cx, y: b.y, x2: t.x, y2: t.y - 0.5 }); this.damageUnit(t, dmg, null, k); }
           else if (tier === 3) { this.shoot(P.SHELL, b.cx, b.y - 1, t.x, t.y, dmg, 1.5, null, null, k); }
-          else { this.emit({ kind: 'laser', x: b.cx, y: b.y - 1, x2: t.x, y2: t.y - 0.5, color: '#ff3d6e' }); this.damageUnit(t, dmg, null, k); }
+          else if (tier === 4) { this.emit({ kind: 'laser', x: b.cx, y: b.y - 1, x2: t.x, y2: t.y - 0.5, color: '#ff3d6e' }); this.damageUnit(t, dmg, null, k); }
+          else {
+            this.emit({ kind: 'laser', x: b.cx, y: b.y - 1, x2: t.x, y2: t.y - 0.5, color: tier === 5 ? '#8fd8ff' : '#d58bff' });
+            this.damageUnit(t, dmg, null, k);
+            if (tier >= 6) this.explode(t.x, t.y, 1.2, dmg * 0.3, k, null, { fire: false });
+          }
         }
         break;
       }
@@ -1159,57 +1174,147 @@ export class Game {
       }
       case P.SHELL:
       case P.BOMB:
-        this.explode(p.tx, p.ty, p.aoe || 1, p.dmg, p.owner, p.src && !p.src.dead ? p.src : null, { fire: p.kind === P.BOMB, bld: p.kind === P.BOMB ? 2 : 1.2 });
+        this.explode(p.tx, p.ty, p.aoe || 1, p.dmg, p.owner, p.src && !p.src.dead ? p.src : null, { fire: p.kind === P.BOMB, bld: p.kind === P.BOMB ? 2.5 : 1.2, air: p.kind === P.BOMB });
+        break;
+      case P.CRUISE:
+        if (intercepted(this, p, 1)) break;
+        this.shake = Math.max(this.shake, 5);
+        this.explode(p.tx, p.ty, p.aoe || 3.2, p.dmg, p.owner, null, { fire: true, bld: 3, air: true });
+        this.emit({ kind: 'smoke', x: p.tx, y: p.ty - 1, r: 3, color: '#444' });
+        break;
+      case P.ORBITAL:
+        if (intercepted(this, p, 0.5)) break;
+        orbitalImpact(this, p.tx, p.ty, p.owner);
         break;
       case P.FIREBALL:
         this.explode(p.tx, p.ty, p.aoe || 1.5, p.dmg, null, p.src && !p.src.dead ? p.src : null, { fire: true, bld: 1.5 });
         break;
       case P.MISSILE:
+        if (intercepted(this, p, 1)) break;
         nukeAt(this, p.tx, p.ty, p.owner);
         break;
       case P.METEOR:
-        meteorImpact(this, p.tx, p.ty);
+        if (p.aoe > 6) asteroidImpact(this, p.tx, p.ty, p.aoe);
+        else meteorImpact(this, p.tx, p.ty);
         break;
     }
   }
 }
 
-export function nukeAt(g: Game, x: number, y: number, owner: Kingdom | null, test = false): void {
+const BEAM: Record<string, string> = { railgun: '#8fd8ff', plasma: '#d58bff', titan: '#ff8a3d' };
+function beamColor(u: Unit): string {
+  return (u.sclass >= 0 && BEAM[SOLDIERS[u.sclass].weapon]) || '#ff3d6e';
+}
+
+/** Missile defense / energy shields of the kingdom that owns the target tile. */
+function intercepted(g: Game, p: Projectile, factor: number): boolean {
   const w = g.world;
-  const R = test ? 7 : 10;
+  const i = w.tileAt(p.tx, p.ty);
+  if (i < 0 || !w.owner[i]) return false;
+  const c = g.cityById.get(w.owner[i]);
+  if (!c || c.kingdom === p.owner) return false;
+  const k = c.kingdom;
+  if (k.caps.shield <= 0 || !g.rng.chance(k.caps.shield * factor)) return false;
+  g.emit({ kind: 'explosion', x: p.tx, y: p.ty - 6, r: p.kind === P.MISSILE ? 3 : 1.6 });
+  g.emit({ kind: 'laser', x: c.x, y: c.y - 1, x2: p.tx, y2: p.ty - 6, color: k.caps.shield >= 0.5 ? '#7ff' : '#fff' });
+  if (p.kind === P.MISSILE) g.log(`🛡 ${g.kName(k)} shot down a nuclear missile over ${c.name}!`, 'nuke', p.tx, p.ty, '#7ff', true);
+  return true;
+}
+
+/** Kinetic bombardment from orbit: a tungsten rod falls at hypersonic speed. */
+export function orbitalImpact(g: Game, x: number, y: number, owner: Kingdom | null): void {
+  const w = g.world;
+  g.shake = Math.max(g.shake, 12);
+  g.flash = Math.max(g.flash, 0.35);
+  g.explode(x, y, 5, 900, owner, null, { fire: true, crater: true, bld: 5, air: true });
+  for (let dy = -3; dy <= 3; dy++) for (let dx = -3; dx <= 3; dx++) {
+    const d = Math.hypot(dx, dy);
+    const tx = Math.floor(x) + dx, ty = Math.floor(y) + dy;
+    if (d > 3.2 || !w.inb(tx, ty)) continue;
+    const i = ty * w.w + tx;
+    if (d < 1.5 && !w.isWater(i)) w.lower(i);
+    else if (!w.isWater(i) && TER[w.ter[i]].elev === 4) w.setTer(i, T.ASH);
+  }
+  g.emit({ kind: 'explosion', x, y, r: 6 });
+  g.emit({ kind: 'smoke', x, y: y - 1, r: 4, color: '#555' });
+}
+
+/** Warhead yield (blast radius in tiles) for a kingdom's arsenal. */
+export function nukeRadius(owner: Kingdom | null, test = false): number {
+  const m = owner ? owner.caps.yieldMult : 1;
+  return (test ? 9 : 14) * m;
+}
+
+export function nukeAt(g: Game, x: number, y: number, owner: Kingdom | null, test = false, radius = 0): { dead: number; cities: string[] } {
+  const w = g.world;
+  const R = radius || nukeRadius(owner, test);
+  const big = R / 14;
   g.stats.nukes++;
-  g.nuclearWinter += test ? 0.15 : 1;
+  g.nuclearWinter += (test ? 0.15 : 1) * big;
   if (!test) { g.combatNukes++; g.lastNukeYear = g.year; }
   g.flash = 1;
-  g.shake = 18;
+  g.shake = 18 + R;
   g.emit({ kind: 'nuke', x, y, r: R });
-  g.spatial.query(x, y, R + 2, (u, d2) => {
+  const deaths0 = g.stats.deaths;
+  // cities caught in the fireball
+  const hit: City[] = [];
+  for (const c of g.cities) if (Math.hypot(c.x - x, c.y - y) < R * 1.1) hit.push(c);
+  // the blast: everything inside the fireball is vaporized, the shock wave kills most beyond it
+  g.spatial.query(x, y, R * 1.6, (u, d2) => {
     const d = Math.sqrt(d2);
-    g.damageUnit(u, d < R * 0.6 ? 99999 : 600 * (1 - d / (R + 2)), null, null);
+    const dmg = d < R * 0.6 ? 1e6 : d < R ? 3000 * (1 - d / R) + 400 : 350 * (1 - (d - R) / (R * 0.6));
+    if (dmg > 0) g.damageUnit(u, dmg, null, null);
   });
-  const r0 = R + 4;
+  const r0 = Math.ceil(R * 1.8);
+  const cx = Math.floor(x), cy = Math.floor(y);
   for (let dy = -r0; dy <= r0; dy++) for (let dx = -r0; dx <= r0; dx++) {
     const d = Math.hypot(dx, dy);
     if (d > r0) continue;
-    const tx = Math.floor(x) + dx, ty = Math.floor(y) + dy;
+    const tx = cx + dx, ty = cy + dy;
     if (!w.inb(tx, ty)) continue;
     const i = ty * w.w + tx;
-    if (d <= R) {
-      const bid = w.bld[i];
-      if (bid) { const b = g.bldById.get(bid); if (b) { b.hp = 0; g.destroyBuilding(b, null); } }
-      if (w.ter[i] > 2 && w.ter[i] !== T.PEAK && w.ter[i] !== T.MOUNTAIN) {
-        if (d < R * 0.35) w.setTer(i, T.ASH);
-        else if (TER[w.ter[i]].elev === 4 || w.ter[i] === T.HILLS) w.setTer(i, g.rng.chance(0.5) ? T.WASTE : T.ASH);
+    const bid = w.bld[i];
+    if (d <= R * 1.5 && bid) {
+      const b = g.bldById.get(bid);
+      if (b) {
+        if (d <= R) { b.hp = 0; g.destroyBuilding(b, null); }
+        else g.damageBuilding(b, b.maxHp * (0.9 - (d - R) / (R * 0.5) * 0.6), null);
       }
-      if (w.flora[i]) w.setFlora(i, g.rng.chance(0.3) ? F.DEAD : F.NONE);
-      if (g.rng.chance(0.2)) w.ignite(i, 150);
     }
-    w.poll[i] = Math.min(255, w.poll[i] + Math.round(255 * (1 - d / r0)));
+    const t = w.ter[i];
+    if (d <= R) {
+      if (d < R * 0.14 && !w.isWater(i)) { w.lower(i); w.lower(i); }                 // crater (fills into a lake)
+      else if (t > 2 && t !== T.PEAK && t !== T.MOUNTAIN) {
+        if (d < R * 0.55) w.setTer(i, T.ASH);
+        else if (TER[t].elev === 4 || t === T.HILLS) w.setTer(i, g.rng.chance(0.6) ? T.WASTE : T.ASH);
+      }
+      if (w.flora[i]) w.setFlora(i, g.rng.chance(0.25) ? F.DEAD : F.NONE);
+      if (g.rng.chance(0.45)) w.ignite(i, 200);                                       // firestorm
+    } else if (d <= R * 1.5) {
+      if (w.flora[i] && g.rng.chance(0.5)) w.setFlora(i, F.DEAD);
+      if (g.rng.chance(0.12)) w.ignite(i, 120);
+    }
+    w.poll[i] = Math.min(255, w.poll[i] + Math.round(255 * Math.max(0, 1 - d / r0)));
   }
-  g.carbon += 200;
+  g.carbon += 200 * big;
+  const dead = g.stats.deaths - deaths0;
+  const names: string[] = [], hurt: string[] = [];
+  for (const c of hit) {
+    if (c.dead) continue;
+    if (c.members.length === 0) { names.push(c.name); g.destroyCity(c, 'wiped off the map by a nuclear blast'); }
+    else hurt.push(c.name);
+  }
+  if (!test) {
+    startFallout(g, x, y, R);
+    const parts: string[] = [];
+    if (names.length) parts.push(`${names.join(', ')} ${names.length > 1 ? 'were' : 'was'} wiped out`);
+    if (hurt.length) parts.push(`${hurt.join(', ')} ${hurt.length > 1 ? 'lie' : 'lies'} in ruins`);
+    if (dead > 0 || parts.length) g.log(`☢ ${dead.toLocaleString()} people died in the blast${parts.length ? ' — ' + parts.join('; ') : ''}`, 'nuke', x, y, '#fb4', true);
+  }
   if (owner) {
     for (const o of g.kingdoms) if (o !== owner) { const r = o.relation(owner); r.opinion -= 40; r.memory += 40; }
   }
+  return { dead, cities: names };
 }
 
 export function meteorImpact(g: Game, x: number, y: number): void {

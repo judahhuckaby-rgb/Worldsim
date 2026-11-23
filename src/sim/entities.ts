@@ -247,6 +247,9 @@ export class Kingdom {
   splitCD = 0;
   infra: InfraProject | null = null;
   links = new Set<string>();
+  blackoutT = 0;          // solar flare: grid down until this tick
+  player = false;         // commanded by the player
+  mobilizeT = 0;          // general mobilization until this tick
 
   constructor(id: number, baseName: string, species: number, color: [number, number, number]) {
     this.id = id;

@@ -3,7 +3,8 @@
 A god-simulation sandbox where civilizations don't just grow — they **advance**.
 Shape continents, spawn peoples, unleash disasters, and watch kingdoms climb a real
 technology tree from campfires and stone huts to factories, jets, nukes, glass
-skyscrapers, and colony ships to the stars.
+skyscrapers, Mars colonies, plasma weapons and galactic crystal spires — or take command of
+one nation yourself.
 
 Runs on **Windows** (Electron) and **Android** (APK, Capacitor), from one TypeScript/Canvas codebase.
 
@@ -24,10 +25,10 @@ Runs on **Windows** (Electron) and **Android** (APK, Capacitor), from one TypeSc
 **Civilization**
 - Villages gather, farm, chop, mine, build, and grow into towns, cities and metropolises with borders
 - Realistic demographics: high mortality and slow growth early, population booms after medicine and sanitation
-- Cities lay out street grids and city blocks; nations build intercity roads, railways and two-lane motorways tile by tile
-- Traffic: carts, cars, trucks, buses and hovercars on the roads; steam, diesel and maglev trains on the railways
+- Cities lay out street grids and city blocks; nations link every city to its neighbours and the capital with roads, build international roads to friendly nations, then railways and two-lane motorways, tile by tile
+- Dense traffic visible from far out: carts, cars, trucks, buses and hovercars (faster on highways); long steam, diesel and maglev trains
 - Settlers found new cities; ships carry colonists and armies across the sea
-- Governments evolve with the era: Tribe → Chiefdom → Kingdom → Empire → Republic → Federation → Star Union
+- Governments evolve with the era: Tribe → Chiefdom → Kingdom → Empire → Republic → Federation → Star Union → Solar Commonwealth → Collective → Galactic Republic
 
 **Nations & world politics**
 - Every nation has its own flag; zoomed out, the map reads like a political world map
@@ -35,25 +36,31 @@ Runs on **Windows** (Electron) and **Android** (APK, Capacitor), from one TypeSc
 - Overstretched nations split apart — civil wars or peaceful dissolutions (\"North X\" / \"South X\"); seafaring nations colonize other continents
 - Wars keep score; named peace treaties make the loser cede cities and pay reparations
 - A World Council forms in the Modern Age, admits nations and brokers peace
-- Nuclear powers test bombs, build arsenals and are deterred from attacking each other; desperate nations may strike first and be answered in kind
+- Modern wars are fought from the air: bomber raids from every airbase, cruise-missile salvos, and orbital kinetic strikes in the future ages
+- Nuclear powers test bombs, build arsenals and use them in wars — first strikes when losing or desperate, multi-warhead salvos, retaliation in kind; deterrence and a Nuclear doctrine law (restrained / realistic / trigger-happy) temper it
+- Nukes are devastating: the fireball erases whole cities, firestorms spread, a crater lake forms, radioactive fallout drifts downwind for years; hydrogen and antimatter bombs are far bigger; missile defense and energy shields can intercept
 - Nuclear winter after nuclear exchanges; the Council can pass a Nuclear Weapons Ban (signatories disarm, can withdraw) and a Climate Accord
 - Doomsday clock, nuclear arsenals, accords and wars on the 🌐 World affairs screen
 
 **Technology — the main event**
-- 68 technologies across 10 eras: Stone, Bronze, Iron, Medieval, Renaissance, Industrial, Modern, Atomic, Information, Space
-- Paced like history: roughly a thousand-plus simulated years from the first campfire to the space age (adjustable in World laws)
+- 88 technologies across 13 eras: Stone, Bronze, Iron, Medieval, Renaissance, Industrial, Modern, Atomic, Information, Space, Interplanetary, Singularity, Galactic
+- Paced like history: centuries of slow early progress, then accelerating science (adjustable in World laws, or start a world in any era)
 - Each discovery changes the simulation: farms, roads, docks and ships, castles and knights, muskets and cannons,
   factories and smog, electric city lights at night, tanks, air raids, nuclear missiles, labs, renewable/fusion power, mechs, lasers, rockets
-- 16 soldier types, 6 ship classes and 4 aircraft classes; armies re-equip as their kingdom advances
+- 20 soldier types (up to railgunners, cyborgs, plasma troopers and titan walkers), 6 ship classes and 6 aircraft classes (up to stealth bombers and plasma gunships); armies re-equip as their kingdom advances
 - Every building is rebuilt in the architectural style of each new era
 - Industry pollutes land and warms the climate (melting ice, rising seas) until clean energy is discovered
-- Space-age kingdoms launch rockets; five colony ships let a civilization ascend
+- Space-age kingdoms launch rockets; in the Galactic Age five colony ships let a civilization ascend
 - Knowledge diffuses between neighbours; you can inspire, gift technologies, or plunge a kingdom into a dark age
 
+**Lead a nation**
+- Press 🎮 Take command on any nation: a command bar lets you send the army against a city (by sea too), call air raids, cruise missiles, orbital strikes and nukes, found new cities, mobilize, choose research, and negotiate peace, alliances, trade and pacts — the economy runs itself
+
 **God powers & disasters**
-- Rain, lightning, fire, meteors, meteor showers, earthquakes, tornadoes, volcanoes, blizzards, droughts, acid rain, plague, alien invasions
-- Bless, curse, heal, madness, divine smite, nuke, erase, purify, cool the climate
-- Force wars and peace, friendship, rebellions, bounties
+- Rain, lightning, fire, meteors, meteor showers, giant asteroids, tsunamis, solar flares, earthquakes, tornadoes, volcanoes, blizzards, droughts, acid rain, plague, pandemics, alien invasions
+- Bless, curse, heal, madness, divine smite, nuke, hydrogen bomb, orbital strike, erase, purify, cool the climate
+- Paint roads, highways and railways
+- Force wars and peace, friendship, rebellions, raise armies, bounties
 
 **Updates**
 - The app checks GitHub Releases: Android downloads the new APK and opens the installer; the Windows installer
@@ -62,7 +69,7 @@ Runs on **Windows** (Electron) and **Android** (APK, Capacitor), from one TypeSc
 **Interface**
 - Inspector for people, buildings, cities and kingdoms; tech-tree viewer; history log; statistics with charts
 - Map modes: normal, political, technology eras, pollution; minimap; day/night cycle
-- World laws (toggle wars, nukes, research, disasters, climate, rebellions…, research speed, population cap)
+- World laws (toggle wars, nukes, research, disasters, climate, rebellions…, research speed, nuclear doctrine, population cap)
 - Save slots + autosave, touch controls (pinch, drag), mouse & keyboard controls
 
 ## Controls

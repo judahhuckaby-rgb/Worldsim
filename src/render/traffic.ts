@@ -24,9 +24,40 @@ const WAGON_COLORS = ['#7a4a2e', '#5d6168', '#9a2f2f', '#2f5f8a', '#4f7a3a'];
 export class Traffic {
   list: Vehicle[] = [];
   private spawnAcc = 0;
+  // road tiles inside the view, rescanned now and then so spawning never misses
+  private roads = new Int32Array(0);
+  private nRoads = 0;
+  private nRails = 0;
+  private scanT = 0;
+  private scanKey = '';
 
   reset(): void {
     this.list = [];
+    this.scanKey = '';
+  }
+
+  private scan(g: Game, x0: number, y0: number, x1: number, y1: number): void {
+    const w = g.world;
+    const ax = Math.max(0, Math.floor(x0)), bx = Math.min(w.w - 1, Math.ceil(x1));
+    const ay = Math.max(0, Math.floor(y0)), by = Math.min(w.h - 1, Math.ceil(y1));
+    const cap = 60000;
+    if (this.roads.length < cap) this.roads = new Int32Array(cap);
+    let n = 0, rails = 0;
+    // stride so huge views stay cheap; spawning only needs a representative sample
+    const area = (bx - ax + 1) * (by - ay + 1);
+    const step = area > 400000 ? 2 : 1;
+    for (let y = ay; y <= by; y += step) {
+      const row = y * w.w;
+      for (let x = ax; x <= bx; x += step) {
+        const t = w.ter[row + x];
+        if (t === T.ROAD || t === T.PAVED || t === T.HIGHWAY || t === T.RAIL) {
+          if (n < cap) this.roads[n++] = row + x;
+          if (t === T.RAIL) rails++;
+        }
+      }
+    }
+    this.nRoads = n;
+    this.nRails = rails;
   }
 
   private isRail(t: number): boolean { return t === T.RAIL; }
@@ -35,7 +66,7 @@ export class Traffic {
   update(g: Game, dt: number, simSpeed: number, x0: number, y0: number, x1: number, y1: number, zoom: number): void {
     const w = g.world;
     const live = this.list;
-    if (zoom < 5) { if (live.length) live.length = 0; return; }
+    if (zoom < 2.6) { if (live.length) live.length = 0; return; }
     const mult = simSpeed <= 0 ? 0 : Math.min(3, 0.7 + Math.sqrt(simSpeed) * 0.5);
     // move
     let j = 0;
@@ -43,38 +74,46 @@ export class Traffic {
       const v = live[k];
       v.life -= dt;
       if (v.life <= 0 || v.x < x0 - 12 || v.x > x1 + 12 || v.y < y0 - 12 || v.y > y1 + 12) continue;
-      if (mult > 0) this.move(g, v, v.speed * mult * dt);
+      if (mult > 0) this.move(g, v, v.speed * mult * dt * (g.world.ter[Math.floor(v.y) * w.w + Math.floor(v.x)] === T.HIGHWAY ? 1.7 : 1));
       live[j++] = v;
     }
     live.length = j;
-    // spawn around the view
-    const area = Math.max(1, (x1 - x0) * (y1 - y0));
-    const targetCars = Math.min(220, area / 30);
+    // rescan the visible road network when the view moves or every couple of seconds
+    this.scanT -= dt;
+    const key = `${Math.round(x0 / 8)},${Math.round(y0 / 8)},${Math.round(x1 / 8)},${Math.round(y1 / 8)}`;
+    if (key !== this.scanKey || this.scanT <= 0) { this.scanKey = key; this.scanT = 2; this.scan(g, x0, y0, x1, y1); }
+    if (this.nRoads === 0) return;
+    // density follows the size of the network in view
+    const targetCars = Math.min(700, 10 + this.nRoads / 7);
+    const maxTrains = Math.min(24, 2 + Math.floor(this.nRails / 120));
     this.spawnAcc += dt;
-    if (this.spawnAcc < 0.05) return;
+    if (this.spawnAcc < 0.04) return;
     this.spawnAcc = 0;
     let trains = 0;
     for (const v of live) if (v.kind >= V.STEAM) trains++;
-    for (let tries = 0; tries < 14 && live.length < targetCars + trains; tries++) {
-      const tx = Math.floor(x0 + Math.random() * (x1 - x0)), ty = Math.floor(y0 + Math.random() * (y1 - y0));
-      if (!w.inb(tx, ty)) continue;
-      const i = ty * w.w + tx;
+    const need = targetCars + trains - live.length;
+    const tries = Math.min(80, Math.max(6, need));
+    for (let n = 0; n < tries && live.length < targetCars + trains; n++) {
+      const i = this.roads[Math.floor(Math.random() * this.nRoads)];
       const t = w.ter[i];
       if (!isRoad(t)) continue;
+      const tx = i % w.w, ty = (i / w.w) | 0;
       const o = w.owner[i];
       const city = o ? g.cityById.get(o) : null;
-      if (!city) continue;
-      const k = city.kingdom;
+      // countryside roads take the traffic of the age
+      const era = city ? city.kingdom.era : g.worldEra;
+      const roads = city ? city.kingdom.caps.roads : t === T.ROAD ? (g.worldEra >= 6 ? 2 : 1) : 2;
       if (t === T.RAIL) {
-        if (trains >= 6 || !k.techs[TECH_BY_ID['railroad'].idx]) continue;
-        const kind = k.era >= 8 ? V.MAGLEV : k.era >= 6 ? V.DIESEL : V.STEAM;
+        if (trains >= maxTrains || era < 5) continue;
+        const kind = era >= 8 ? V.MAGLEV : era >= 6 ? V.DIESEL : V.STEAM;
         if (this.spawn(g, tx, ty, kind)) trains++;
       } else {
-        if (k.caps.roads < 1) continue;
+        if (roads < 1) continue;
         let kind: V;
-        if (k.era >= 9) kind = Math.random() < 0.8 ? V.HOVER : V.BUS;
-        else if (k.caps.roads >= 2) { const r = Math.random(); kind = r < 0.72 ? V.CAR : r < 0.9 ? V.TRUCK : V.BUS; }
-        else { if (Math.random() < 0.6) continue; kind = V.CART; }
+        if (era >= 9) { const r = Math.random(); kind = r < 0.7 ? V.HOVER : r < 0.85 ? V.BUS : V.TRUCK; }
+        else if (roads >= 2 && era >= 6) { const r = Math.random(); kind = r < 0.7 ? V.CAR : r < 0.9 ? V.TRUCK : V.BUS; }
+        else if (roads >= 2) { const r = Math.random(); kind = r < 0.45 ? V.CART : r < 0.85 ? V.CAR : V.TRUCK; }
+        else { if (Math.random() < 0.4) continue; kind = V.CART; }
         this.spawn(g, tx, ty, kind);
       }
     }
@@ -91,7 +130,7 @@ export class Traffic {
       : kind === V.HOVER ? '#bff4ff' : kind === V.STEAM ? '#26272b' : kind === V.DIESEL ? (Math.random() < 0.5 ? '#d23a2a' : '#e3b52c') : kind === V.MAGLEV ? '#f4f6fa' : CAR_COLORS[Math.floor(Math.random() * CAR_COLORS.length)];
     this.list.push({
       kind, x: tx + 0.5, y: ty + 0.5, tx: tx + 0.5 + dx, ty: ty + 0.5 + dy, dx, dy, speed: speed * (0.85 + Math.random() * 0.3),
-      life: rail ? 40 + Math.random() * 30 : 20 + Math.random() * 30, color, wagons: rail ? 3 + Math.floor(Math.random() * 5) : 0, trail: [],
+      life: rail ? 50 + Math.random() * 40 : 30 + Math.random() * 40, color, wagons: rail ? 4 + Math.floor(Math.random() * 7) : 0, trail: [],
     });
     void w;
     return true;
@@ -177,13 +216,13 @@ export class Traffic {
         for (let k = v.wagons; k >= 1; k--) {
           const p = this.behind(v, k * 0.78);
           const h = p[2] === 1;
-          const L = 0.66 * z, Wd = 0.3 * z;
+          const L = 0.72 * z, Wd = 0.34 * z;
           const col = v.kind === V.MAGLEV ? '#e6ebf2' : WAGON_COLORS[(k + v.wagons) % WAGON_COLORS.length];
           ctx.fillStyle = col;
           ctx.fillRect(ox + p[0] * z - (h ? L : Wd) / 2, oy + p[1] * z - (h ? Wd : L) / 2, h ? L : Wd, h ? Wd : L);
           if (v.kind === V.MAGLEV) { ctx.fillStyle = '#3cc7ff'; ctx.fillRect(ox + p[0] * z - (h ? L : 1) / 2, oy + p[1] * z - (h ? 1 : L) / 2, h ? L : Math.max(1, z * 0.06), h ? Math.max(1, z * 0.06) : L); }
         }
-        const L = 0.72 * z, Wd = 0.34 * z;
+        const L = 0.8 * z, Wd = 0.38 * z;
         ctx.fillStyle = v.color;
         ctx.fillRect(ox + v.x * z - (horiz ? L : Wd) / 2, oy + v.y * z - (horiz ? Wd : L) / 2, horiz ? L : Wd, horiz ? Wd : L);
         ctx.fillStyle = v.kind === V.STEAM ? '#c23a2a' : '#1d2a3a';
@@ -192,13 +231,13 @@ export class Traffic {
         continue;
       }
       // keep right: offset to the right of travel direction
-      const off = 0.2;
+      const off = 0.22;
       const px = v.x + -v.dy * off, py = v.y + v.dx * off;
-      let L = 0.42, Wd = 0.24;
-      if (v.kind === V.TRUCK) { L = 0.62; Wd = 0.27; }
-      else if (v.kind === V.BUS) { L = 0.72; Wd = 0.27; }
-      else if (v.kind === V.CART) { L = 0.36; Wd = 0.24; }
-      else if (v.kind === V.HOVER) { L = 0.44; Wd = 0.26; }
+      let L = 0.56, Wd = 0.32;
+      if (v.kind === V.TRUCK) { L = 0.8; Wd = 0.34; }
+      else if (v.kind === V.BUS) { L = 0.9; Wd = 0.34; }
+      else if (v.kind === V.CART) { L = 0.46; Wd = 0.3; }
+      else if (v.kind === V.HOVER) { L = 0.58; Wd = 0.32; }
       const sw = (horiz ? L : Wd) * z, sh = (horiz ? Wd : L) * z;
       const sx = ox + px * z - sw / 2, sy = oy + py * z - sh / 2;
       if (v.kind === V.CART) {

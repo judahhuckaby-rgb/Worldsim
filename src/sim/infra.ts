@@ -44,19 +44,23 @@ function plan(g: Game, k: Kingdom, kind: InfraProject['kind'], a: City, b: City,
 
 /** Choose the next infrastructure project for a kingdom. */
 function chooseRoads(g: Game, k: Kingdom, cities: City[], cap: City | null): boolean {
-  // 1. roads: connect every city to its nearest neighbour (and to the capital)
+  // 1. roads: connect every city to its two nearest neighbours and to the capital
   for (const a of cities) {
-    let best: City | null = null, bd = 1e9;
+    const near: [number, City][] = [];
     for (const b of cities) {
       if (a === b || !sameIsland(g, a, b)) continue;
       const d = Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
-      if (d > 75 || k.links.has(key('r', a, b))) continue;
-      if (d < bd) { bd = d; best = b; }
+      if (d <= 110) near.push([d, b]);
     }
-    if (best && plan(g, k, 'road', a, best, key('r', a, best))) return true;
+    near.sort((p, q) => p[0] - q[0]);
+    for (let n = 0; n < Math.min(near.length, k.caps.roads >= 2 ? 3 : 2); n++) {
+      const b = near[n][1];
+      if (k.links.has(key('r', a, b))) continue;
+      if (plan(g, k, 'road', a, b, key('r', a, b))) return true;
+    }
     if (cap && cap !== a && sameIsland(g, a, cap) && !k.links.has(key('r', a, cap))) {
       const d = Math.abs(a.x - cap.x) + Math.abs(a.y - cap.y);
-      if (d < 110 && plan(g, k, 'road', a, cap, key('r', a, cap))) return true;
+      if (d < 170 && plan(g, k, 'road', a, cap, key('r', a, cap))) return true;
     }
   }
   return false;
@@ -67,14 +71,15 @@ function chooseTrade(g: Game, k: Kingdom, cities: City[], cap: City | null): boo
   for (const o of g.kingdoms) {
     if (o === k) continue;
     const r = k.rel.get(o.id);
-    if (!r || !r.trade || r.war) continue;
+    // trade partners and friendly neighbours are linked by international roads
+    if (!r || r.war || !(r.trade || r.ally || r.opinion > -10)) continue;
     let pa: City | null = null, pb: City | null = null, bd = 1e9;
     for (const a of cities) for (const b of o.cities) {
       if (!b.center || !sameIsland(g, a, b)) continue;
       const d = Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
       if (d < bd) { bd = d; pa = a; pb = b; }
     }
-    if (pa && pb && bd < 120) {
+    if (pa && pb && bd < (r.trade ? 160 : 110)) {
       const kk = key('t', pa, pb);
       if (!k.links.has(kk) && !o.links.has(kk) && plan(g, k, 'road', pa, pb, kk)) return true;
     }
@@ -97,11 +102,17 @@ function chooseRail(g: Game, k: Kingdom, cities: City[], cap: City | null): bool
 }
 
 function chooseMotorways(g: Game, k: Kingdom, cities: City[], cap: City | null): boolean {
-  // 4. motorways (Mass Production): two-lane highways along the busiest road links
+  // 4. motorways (Mass Production): two-lane highways from the capital and along busy road links
   if (k.caps.roads >= 2 && has(k, 'massprod')) {
+    if (cap) for (const a of cities) {
+      if (a === cap || a.members.length < 22 || !k.links.has(key('r', a, cap))) continue;
+      const kk = key('h', a, cap);
+      if (k.links.has(kk)) continue;
+      if (plan(g, k, 'highway', a, cap, kk)) return true;
+    }
     for (const a of cities) for (const b of cities) {
       if (a.id >= b.id || !k.links.has(key('r', a, b))) continue;
-      if (a.members.length + b.members.length < 50) continue;
+      if (a.members.length + b.members.length < 36) continue;
       const kk = key('h', a, b);
       if (k.links.has(kk)) continue;
       if (plan(g, k, 'highway', a, b, kk)) return true;
@@ -129,7 +140,7 @@ function choose(g: Game, k: Kingdom): void {
   if (cities.length === 0) return;
   const cap = k.capital;
   const order = [chooseRoads, chooseTrade, chooseRail, chooseMotorways, choosePaving];
-  const start = Math.floor(k.t2 / 5) % order.length; // choose() runs every 5th turn
+  const start = Math.floor(k.t2 / 3) % order.length; // choose() runs every 3rd turn
   for (let n = 0; n < order.length; n++) {
     if (order[(start + n) % order.length](g, k, cities, cap)) return;
   }
@@ -138,12 +149,12 @@ function choose(g: Game, k: Kingdom): void {
 export function updateInfrastructure(g: Game, k: Kingdom): void {
   if (k.caps.roads < 1) return;
   if (!k.infra) {
-    if (k.t2 % 5 === 0 && g.pathBudget > 0) { g.pathBudget -= 4; planCalls = 0; choose(g, k); }
+    if (k.t2 % 3 === 0 && g.pathBudget > 0) { g.pathBudget -= 4; planCalls = 0; choose(g, k); }
     return;
   }
   const p = k.infra;
   const w = g.world;
-  let budget = p.kind === 'rail' ? 3 : p.kind === 'highway' ? 6 : 4;
+  let budget = p.kind === 'rail' ? 4 : p.kind === 'highway' ? 8 : 6;
   budget = Math.ceil(budget * Math.min(2.5, k.caps.buildMult));
   while (budget > 0 && p.i < p.path.length) {
     const i = p.path[p.i++];

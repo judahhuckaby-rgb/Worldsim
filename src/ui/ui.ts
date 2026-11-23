@@ -14,6 +14,8 @@ import { listSlots, SlotMeta } from '../sim/save';
 import { flagImg } from '../render/flags';
 import { APP_VERSION } from '../update';
 import { doomsday, nuclearPowers, nukeBanned, climateSigned, accord } from '../sim/politics';
+import { CommandUI } from './command';
+import { cmdResearch } from '../sim/command';
 
 export interface NewWorldOpts { w: number; h: number; type: MapType; seed: number; civs: number; animals: boolean; startEra: number; }
 
@@ -85,6 +87,7 @@ export class UI {
   iconCache = new Map<string, string>();
   canQuit = false;
   onCheckUpdates: () => void = () => {};
+  cmd!: CommandUI;
   onQuit: () => void = () => {};
 
   constructor(app: AppLike, root: HTMLElement) {
@@ -206,6 +209,7 @@ export class UI {
     this.modalBack.onclick = e => { if (e.target === this.modalBack) this.closeModal(); };
     this.modal = el('div', 'modal');
     this.modalBack.append(this.modal);
+    this.cmd = new CommandUI(this, r);
     r.append(this.modalBack);
 
     this.renderTools();
@@ -298,6 +302,7 @@ export class UI {
     this.statsEl.innerHTML = `👥 <b>${fmt(g.personPop)}</b> &nbsp;👑 <b>${g.kingdoms.length}</b> &nbsp;🏘 <b>${g.cities.length}</b>${g.heat > 0.3 ? ` &nbsp;🌡 <b style="color:${g.heat > 1 ? '#ff6a5a' : '#ffcf4a'}">+${(g.heat * 2).toFixed(1)}°</b>` : ''}`;
     // toasts
     while (g.toasts.length) this.showToast(g.toasts.shift()!);
+    this.cmd.update();
     this.refreshPanel();
     if (this.modalRefresh) this.modalRefresh();
   }
@@ -362,7 +367,9 @@ export class UI {
 
   showToast(e: HistoryEntry): void {
     const level = this.notifyLevel;
-    if (e.kind !== 'info') {
+    const pk = this.cmd ? this.cmd.k : null;
+    const mine = !!pk && pk.alive && e.text.includes(pk.baseName);
+    if (e.kind !== 'info' && !mine) {
       if (level === 'off') return;
       if (level === 'major' && !MAJOR_KINDS.has(e.kind)) return;
     }
@@ -464,6 +471,8 @@ export class UI {
           case 'city': { const c = g.cityById.get(id); if (c) { this.app.renderer.selCity = c; this.showPanel('city', c); } break; }
           case 'goto': this.app.renderer.centerOn(Number(b.dataset.x), Number(b.dataset.y), 10); break;
           case 'tree': { const k = g.kingdomById.get(id); if (k) this.openTechTree(k); break; }
+          case 'command': { const k = g.kingdomById.get(id); if (k && k.alive) { this.cmd.take(k); this.refreshPanel(true); } break; }
+          case 'uncommand': { this.cmd.release(); this.refreshPanel(true); break; }
           case 'gift': { const k = g.kingdomById.get(id); if (k) { this.app.toolCtx.pickKingdom.first = null; const t = TOOLS.find(t => t.id === 'gift')!; t.apply(g, k.capital!.x, k.capital!.y, 1, this.app.toolCtx); this.refreshPanel(true); } break; }
           case 'inspire': { const k = g.kingdomById.get(id); if (k && k.capital) { TOOLS.find(t => t.id === 'inspire')!.apply(g, k.capital.x, k.capital.y, 1, this.app.toolCtx); this.refreshPanel(true); } break; }
           case 'peace': { const k = g.kingdomById.get(id); if (k) { for (const o of g.kingdoms) if (k.atWar(o)) g.makePeace(k, o); this.refreshPanel(true); } break; }
@@ -625,7 +634,8 @@ export class UI {
       <div class="sub">${cur ? `${esc(cur.name)} — ${esc(cur.desc)}` : 'All knowledge attained'}</div>
       <div class="bar"><div style="width:${pct}%"></div></div>
       <div class="sub">${k.researchRate.toFixed(1)} research/year${cur ? ` · ~${Math.ceil(yrs)} years left` : ''}</div>
-      <div class="btns"><button class="btn primary" data-a="tree" data-id="${k.id}">🧪 Tech tree</button><button class="btn" data-a="gift" data-id="${k.id}">📜 Gift tech</button><button class="btn" data-a="inspire" data-id="${k.id}">💡 Inspire</button></div>
+      <div class="btns">${k.player ? `<button class="btn" data-a="uncommand" data-id="${k.id}">🏳️ Step down</button>` : `<button class="btn primary" data-a="command" data-id="${k.id}">🎮 Take command</button>`}</div>
+      <div class="btns"><button class="btn ${k.player ? 'primary' : ''}" data-a="tree" data-id="${k.id}">🧪 Tech tree</button><button class="btn" data-a="gift" data-id="${k.id}">📜 Gift tech</button><button class="btn" data-a="inspire" data-id="${k.id}">💡 Inspire</button></div>
       <h3>Resources</h3><div class="res">${res}</div>
       <h3>Diplomacy</h3><div class="list">${rels || '<div class="sub">No contact with other kingdoms</div>'}</div>
       <div class="btns">${opts ? `<select id="warTarget" class="btn">${opts}</select><button class="btn danger" data-a="war" data-id="${k.id}">⚔ Declare war</button>` : ''}${k.wars ? `<button class="btn" data-a="peace" data-id="${k.id}">🕊 Make peace</button>` : ''}</div>
@@ -744,6 +754,7 @@ export class UI {
       <div class="sub">A god simulation where civilizations climb from the Stone Age to the stars.</div>
       <div class="btns" style="flex-direction:column;align-items:stretch;max-width:360px">
         <button class="btn primary" id="mNew">🌍 New world</button>
+        <button class="btn" id="mPlay">🎮 ${this.cmd.k ? 'Your nation' : 'Lead a nation'}</button>
         <button class="btn" id="mSave">💾 Save world</button>
         <button class="btn" id="mLoad">📂 Load world</button>
         <button class="btn" id="mLaws">⚖️ World laws</button>
@@ -756,6 +767,11 @@ export class UI {
       </div>`);
     const q = (id: string) => this.modal.querySelector('#' + id) as HTMLElement;
     q('mNew').onclick = () => this.openNewWorld();
+    q('mPlay').onclick = () => {
+      const pk = this.cmd.k;
+      if (pk && pk.alive) { this.closeModal(); this.showPanel('kingdom', pk); if (pk.capital) this.app.renderer.centerOn(pk.capital.x, pk.capital.y); }
+      else { this.openKingdoms(); this.toast('Pick a nation, then press 🎮 Take command'); }
+    };
     q('mSave').onclick = () => this.openSlots('save');
     q('mLoad').onclick = () => this.openSlots('load');
     q('mLaws').onclick = () => this.openLaws();
@@ -883,7 +899,7 @@ export class UI {
       }
       const opts = g.kingdoms.map(o => `<option value="${o.id}" ${o === k ? 'selected' : ''}>${esc(g.kName(o))}</option>`).join('');
       return `<h1>🧪 Technology</h1><div class="btns" style="margin:0 0 8px"><select id="ttK" class="btn">${opts}</select></div>
-        <div class="sub">Green = known · gold = researching / available. Tap an available technology to grant it as a divine gift.</div>
+        <div class="sub">${k.player ? 'You lead this nation: tap an available technology to <b>research it next</b>. (The 📜 Gift Technology power still grants techs instantly.)' : 'Green = known · gold = researching / available. Tap an available technology to grant it as a divine gift.'}</div>
         <div class="tree">${cols}</div>`;
     };
     const bind = () => {
@@ -891,6 +907,7 @@ export class UI {
       if (sel) sel.onchange = () => { const nk = this.app.game.kingdomById.get(Number(sel.value)); if (nk) this.openTechTree(nk); };
       this.modal.querySelectorAll<HTMLElement>('[data-t]').forEach(c => c.onclick = () => {
         const idx = Number(c.dataset.t);
+        if (k.alive && k.player) { this.toast(cmdResearch(this.app.game, k, idx)); this.openTechTree(k); return; }
         if (k.alive && canResearch(k.techs, idx)) { this.app.game.learnTech(k, idx, true); this.openTechTree(k); }
       });
     };
@@ -1003,6 +1020,7 @@ export class UI {
     const rows = toggles.map(([k, n, d]) => `<div class="law"><div><b>${n}</b><div class="d">${d}</div></div><div class="switch ${L[k] ? 'on' : ''}" data-law="${String(k)}"></div></div>`).join('');
     this.openModal(`<h1>⚖️ World laws</h1>${rows}
       <div class="law"><div><b>Research speed</b><div class="d">Multiplier on all research</div></div><div class="seg" id="lawRs">${[0.5, 1, 2, 4].map(v => `<button data-v="${v}" class="${L.researchSpeed === v ? 'on' : ''}">${v}×</button>`).join('')}</div></div>
+      <div class="law" style="flex-wrap:wrap"><div><b>Nuclear doctrine</b><div class="d">How readily nations at war use nukes, missiles and bombers</div></div><div class="seg" id="lawNd">${['Restrained', 'Realistic', 'Trigger-happy'].map((n, v) => `<button data-v="${v}" class="${(L.nukeDoctrine ?? 1) === v ? 'on' : ''}">${n}</button>`).join('')}</div></div>
       <div class="law" style="flex-wrap:wrap"><div><b>Population limit</b><div class="d">Lower this on slower devices</div></div><div class="seg" id="lawPop">${[1000, 2000, 3500, 5000, 7500, 10000, 14000].map(v => `<button data-v="${v}" class="${L.maxPop === v ? 'on' : ''}">${v}</button>`).join('')}</div></div>`);
     this.modal.querySelectorAll<HTMLElement>('[data-law]').forEach(s => s.onclick = () => {
       const k = s.dataset.law as keyof typeof L;
@@ -1011,6 +1029,7 @@ export class UI {
     });
     this.modal.querySelectorAll<HTMLElement>('#lawRs button').forEach(b => b.onclick = () => { L.researchSpeed = Number(b.dataset.v); this.openLaws(); });
     this.modal.querySelectorAll<HTMLElement>('#lawPop button').forEach(b => b.onclick = () => { L.maxPop = Number(b.dataset.v); this.openLaws(); });
+    this.modal.querySelectorAll<HTMLElement>('#lawNd button').forEach(b => b.onclick = () => { L.nukeDoctrine = Number(b.dataset.v); this.openLaws(); });
   }
 
   openHelp(): void {
@@ -1026,11 +1045,15 @@ export class UI {
       <h3>Civilizations</h3>
       <div class="sub">Spawn two or more people of the same species close together and they will found a village — or use a Village tool. Settlements gather food, chop wood, quarry stone, farm, build homes and expand their borders. Kingdoms send settlers, sail to new islands, make alliances and wage war.</div>
       <h3>Technology</h3>
-      <div class="sub">Every kingdom researches its own tech tree across ten eras — Stone, Bronze, Iron, Medieval, Renaissance, Industrial, Modern, Atomic, Information and Space. Each discovery changes the world: farms, roads, ships, castles, muskets, factories, electric city lights at night, tanks, air raids, nuclear missiles and finally rockets and colony ships. Buildings are rebuilt in the style of each new era. Industry pollutes and warms the climate unless renewable or fusion power is discovered. Use the 🧪 tech tree to watch progress or grant technologies.</div>
+      <div class="sub">Every kingdom researches its own tech tree across thirteen eras — Stone, Bronze, Iron, Medieval, Renaissance, Industrial, Modern, Atomic, Information, Space, Interplanetary, Singularity and Galactic. Each discovery changes the world: farms, roads, ships, castles, muskets, factories, electric city lights at night, tanks, air raids, cruise and nuclear missiles, rockets, railguns, orbital strikes, energy shields, plasma weapons, titan walkers and finally colony ships to the stars. Buildings are rebuilt in the style of each new era. Industry pollutes and warms the climate unless renewable or fusion power is discovered. Use the 🧪 tech tree to watch progress or grant technologies.</div>
       <h3>Nations & diplomacy</h3>
       <div class="sub">Nations sign trade agreements, non-aggression pacts and alliances, and end wars with named peace treaties where the loser can cede cities and pay reparations. Once radio is invented they found a World Council that brokers peace. Atomic powers test bombs and build arsenals; deterrence keeps most wars conventional, but a desperate nation may strike first and be answered in kind, causing nuclear winter. The council can pass a nuclear weapons ban that disarms its signatories, and a climate accord that cuts pollution. Open 🌐 World affairs to follow it all, including the doomsday clock.</div>
+      <h3>Lead a nation</h3>
+      <div class="sub">Open any nation (👑 or tap one of its cities) and press 🎮 Take command. A command bar appears: send your army to attack a city, call in air raids, cruise missiles, orbital strikes or nukes, found new cities, mobilize, pick what to research and make peace, alliances, trade deals and pacts. Everything else — farming, building, roads — runs on its own.</div>
+      <h3>Modern war</h3>
+      <div class="sub">From the Modern Age nations at war bomb each other's cities, then fire cruise missiles. Nuclear weapons are devastating: the fireball erases cities, firestorms spread, a crater lake forms and radioactive fallout drifts downwind for years. Hydrogen and antimatter bombs are far bigger. Missile defense and energy shields can shoot warheads down. Change how readily nations go nuclear in ⚖️ World laws.</div>
       <h3>Cities & roads</h3>
-      <div class="sub">After the Wheel, towns lay out street grids and build in city blocks. Nations connect their cities with roads, then railways in the Industrial Age and paved highways in the Modern Age.</div>
+      <div class="sub">After the Wheel, towns lay out street grids and build in city blocks. Nations connect every city to its neighbours and the capital with roads, link friendly nations with international roads, then build railways in the Industrial Age and two-lane motorways in the Modern Age. Zoom in to watch carts, cars, trucks, buses, trains and hovercars.</div>
       <h3>Map modes</h3>
       <div class="sub">🗺️ cycles normal, political, technology-era and pollution maps.</div>`);
   }

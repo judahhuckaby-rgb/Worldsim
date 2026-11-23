@@ -1,10 +1,10 @@
 // God powers / tools.
 import type { Game } from '../sim/game';
-import { nukeAt } from '../sim/game';
+import { nukeAt, orbitalImpact, P } from '../sim/game';
 import { T, F, TER, treeFor, isTree, isRoad } from '../sim/terrain';
-import { UK, UDEF, TPY } from '../sim/defs';
+import { UK, UDEF, TPY, JOB, SOLDIERS } from '../sim/defs';
 import { SPECIES } from '../sim/species';
-import { startDisaster, spawnMeteor, alienInvasion, plagueOutbreak } from '../sim/disasters';
+import { startDisaster, spawnMeteor, alienInvasion, plagueOutbreak, spawnAsteroid, solarFlare, pandemic } from '../sim/disasters';
 import { canResearch, NUM_TECH, TECHS } from '../sim/tech';
 import { rebel } from '../sim/ai_city';
 import { refreshStats } from '../sim/ai_units';
@@ -64,6 +64,42 @@ function paint(t: number) {
       else w.setTer(i, t);
     });
   };
+}
+
+function paintRoad(t: number) {
+  return (g: Game, x: number, y: number, r: number) => {
+    const w = g.world;
+    forBrush(g, x, y, Math.min(r, 3), i => {
+      const cur = w.ter[i];
+      if (w.bld[i] || w.isWater(i) || cur === T.PEAK || cur === T.MOUNTAIN || cur === T.LAVA || cur === T.ICE) return;
+      if (cur !== t) w.setTer(i, t);
+      if (w.flora[i] !== F.NONE) w.setFlora(i, F.NONE);
+    });
+  };
+}
+
+function spawnArmy(g: Game, x: number, y: number, _r: number, ctx: ToolCtx): void {
+  const k = kingdomAt(g, x, y);
+  const w = g.world;
+  const i = w.tileAt(x, y);
+  if (!k || i < 0 || !w.walk(i)) { ctx.toast('Tap on land near a nation'); return; }
+  let city = k.capital;
+  let bd = 1e9;
+  for (const c of k.cities) { const d = Math.hypot(c.x - x, c.y - y); if (d < bd) { bd = d; city = c; } }
+  if (!city) return;
+  // the best unit of each role the nation knows
+  const best: Record<string, number> = {};
+  for (let s = 0; s < SOLDIERS.length; s++) { const sd = SOLDIERS[s]; if (!sd.tech || k.techs[TECHS.find(t => t.id === sd.tech)!.idx]) best[sd.role] = s; }
+  const roles = Object.keys(best);
+  for (let n = 0; n < 12; n++) {
+    const u = g.spawnPerson(k.species, x + (Math.random() - 0.5) * 2, y + (Math.random() - 0.5) * 2, k, city, 20 + Math.random() * 10);
+    u.job = JOB.SOLDIER;
+    u.sclass = best[roles[n % roles.length]] ?? 0;
+    refreshStats(g, u);
+    u.hp = u.maxHp;
+  }
+  g.emit({ kind: 'sparkle', x, y, r: 2, color: '#ffe680' });
+  ctx.toast(`12 ${SOLDIERS[best.ranged ?? best.melee ?? 0].name}s and comrades rally for ${g.kName(k)}`);
 }
 
 function kingdomAt(g: Game, x: number, y: number): Kingdom | null {
@@ -132,6 +168,9 @@ export const TOOLS: Tool[] = [
   { id: 'mountain', cat: 'terrain', name: 'Mountain', icon: 'color:#7a7068', mode: 'brush', desc: 'Paint mountains', apply: paint(T.MOUNTAIN) },
   { id: 'peak', cat: 'terrain', name: 'Peak', icon: 'color:#dce0e6', mode: 'brush', desc: 'Paint impassable peaks', apply: paint(T.PEAK) },
   { id: 'lava', cat: 'terrain', name: 'Lava', icon: 'color:#ff6020', mode: 'brush', desc: 'Pour molten lava', apply: paint(T.LAVA) },
+  { id: 'road', cat: 'terrain', name: 'Road', icon: 'color:#a08664', mode: 'brush', desc: 'Lay a road (traffic uses it)', apply: paintRoad(T.PAVED) },
+  { id: 'highway', cat: 'terrain', name: 'Highway', icon: 'color:#4a4c52', mode: 'brush', desc: 'Lay a fast highway (use a brush of 2 for two lanes)', apply: paintRoad(T.HIGHWAY) },
+  { id: 'railway', cat: 'terrain', name: 'Railway', icon: 'color:#6b5a4a', mode: 'brush', desc: 'Lay railway track (trains use it)', apply: paintRoad(T.RAIL) },
   {
     id: 'trees', cat: 'terrain', name: 'Forest', icon: '🌳', mode: 'spray', interval: 60, desc: 'Plant trees', apply: (g, x, y, r) => forBrush(g, x, y, r, i => {
       const w = g.world;
@@ -180,6 +219,10 @@ export const TOOLS: Tool[] = [
   { id: 'drought', cat: 'nature', name: 'Drought', icon: '🏜️', mode: 'click', desc: 'Dry the land and kill crops', apply: (g, x, y) => startDisaster(g, 'drought', x, y) },
   { id: 'acid', cat: 'nature', name: 'Acid Rain', icon: '☢️', mode: 'click', desc: 'Toxic rain withers everything', apply: (g, x, y) => startDisaster(g, 'acid', x, y) },
   { id: 'plague', cat: 'nature', name: 'Plague', icon: '🦠', mode: 'click', desc: 'Infect creatures with a plague', apply: (g, x, y, r, ctx) => { const n = plagueOutbreak(g, x, y, Math.max(3, r)); ctx.toast(n ? `${n} infected` : 'Nobody to infect here'); } },
+  { id: 'asteroid', cat: 'nature', name: 'Asteroid', icon: '🪨', mode: 'click', desc: 'A city-killing asteroid: huge crater, firestorm, impact winter (tsunami if it hits the sea)', apply: (g, x, y) => spawnAsteroid(g, x, y) },
+  { id: 'tsunami', cat: 'nature', name: 'Tsunami', icon: '🌊', mode: 'click', desc: 'A giant wave sweeps the coasts around this point', apply: (g, x, y) => startDisaster(g, 'tsunami', x, y) },
+  { id: 'flare', cat: 'nature', name: 'Solar Flare', icon: '🌞', mode: 'click', desc: 'Knocks out power grids, downs aircraft and missiles, stalls research', apply: g => { solarFlare(g); } },
+  { id: 'pandemic', cat: 'nature', name: 'Pandemic', icon: '😷', mode: 'click', desc: 'Disease breaks out in the six largest cities at once', apply: (g, _x, _y, _r, ctx) => { if (!pandemic(g)) ctx.toast('Nobody to infect'); } },
   { id: 'aliens', cat: 'nature', name: 'Alien Invasion', icon: '👽', mode: 'click', desc: 'Saucers from beyond the stars attack', apply: (g, x, y) => alienInvasion(g, x, y) },
 
   // ---------------- powers
@@ -189,6 +232,8 @@ export const TOOLS: Tool[] = [
   { id: 'madness', cat: 'powers', name: 'Madness', icon: '🤪', mode: 'brush', interval: 200, desc: 'Drive units mad — they attack anyone', apply: (g, x, y, r) => g.spatial.query(x, y, r + 0.5, u => { if (u.kind === UK.PERSON || UDEF[u.kind].pred || UDEF[u.kind].herb) u.madT = TPY * 6; }) },
   { id: 'smite', cat: 'powers', name: 'Divine Smite', icon: '🌟', mode: 'click', desc: 'A beam of holy light', apply: (g, x, y) => { g.emit({ kind: 'lightning', x, y }); g.explode(x, y, 2.5, 500, null, null, { fire: false }); } },
   { id: 'nuke', cat: 'powers', name: 'Nuke', icon: '💥', mode: 'click', desc: 'Atomic devastation', apply: (g, x, y) => { nukeAt(g, x, y, null); g.log('☢ A divine nuclear blast scorched the earth', 'nuke', x, y, '#ff0', true); } },
+  { id: 'tsar', cat: 'powers', name: 'Hydrogen Bomb', icon: '☢️', mode: 'click', desc: 'A gigantic thermonuclear blast with fallout', apply: (g, x, y) => { nukeAt(g, x, y, null, false, 30); g.log('☢ A divine hydrogen bomb erased the land', 'nuke', x, y, '#ff0', true); } },
+  { id: 'rod', cat: 'powers', name: 'Orbital Strike', icon: '🛰️', mode: 'click', desc: 'A tungsten rod falls from orbit', apply: (g, x, y) => { g.shoot(P.ORBITAL, x + 6, y - 70, x, y, 0, 5, null, null); void orbitalImpact; } },
   { id: 'kill', cat: 'powers', name: 'Erase', icon: '🧹', mode: 'brush', interval: 80, desc: 'Remove units', apply: (g, x, y, r) => g.spatial.query(x, y, r + 0.3, u => g.killUnit(u, null)) },
   { id: 'purify', cat: 'powers', name: 'Purify', icon: '💧', mode: 'brush', interval: 120, desc: 'Remove pollution, wasteland, ash and fire', apply: (g, x, y, r) => forBrush(g, x, y, r, i => { const w = g.world; w.poll[i] = 0; w.fire[i] = 0; if (w.ter[i] === T.WASTE || w.ter[i] === T.ASH) w.setTer(i, w.landFor(i)); if (w.flora[i] === F.DEAD) w.setFlora(i, treeFor(w.ter[i])); w.mark(i); }) },
   { id: 'cool', cat: 'powers', name: 'Cool Climate', icon: '🧊', mode: 'click', desc: 'Undo global warming', apply: (g, _x, _y, _r, ctx) => { g.carbon = 0; ctx.toast('The atmosphere has been cleansed'); } },
@@ -280,6 +325,7 @@ export const TOOLS: Tool[] = [
       if (!nk) ctx.toast(`${g.kName(k)} is too small or compact to split (needs 6+ cities spread out)`);
     },
   },
+  { id: 'army', cat: 'civ', name: 'Raise Army', icon: '🪖', mode: 'click', desc: "Twelve of a nation's best soldiers appear here", apply: spawnArmy },
   {
     id: 'riches', cat: 'civ', name: 'Bounty', icon: '💰', mode: 'click', desc: 'Shower a kingdom with resources and food', apply: (g, x, y, _r, ctx) => {
       const k = kingdomAt(g, x, y);

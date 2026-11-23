@@ -18,7 +18,7 @@ export interface Disaster {
 
 export const DISASTER_NAMES: Record<string, string> = {
   tornado: 'Tornado', volcano: 'Volcano', earthquake: 'Earthquake', rain: 'Rainstorm', blizzard: 'Blizzard',
-  meteors: 'Meteor Shower', drought: 'Drought', acid: 'Acid Rain',
+  meteors: 'Meteor Shower', drought: 'Drought', acid: 'Acid Rain', fallout: 'Radioactive Fallout', tsunami: 'Tsunami',
 };
 
 export function startDisaster(g: Game, kind: string, x: number, y: number): void {
@@ -49,6 +49,7 @@ export function startDisaster(g: Game, kind: string, x: number, y: number): void
     case 'blizzard': d.life = 260; d.r = 8; break;
     case 'drought': d.life = 300; d.r = 9; break;
     case 'meteors': d.life = 160; d.r = 18; g.log('☄ A meteor shower lit up the sky', 'disaster', x, y, '#fc6', true); break;
+    case 'tsunami': d.life = 170; d.r = 1; d.vx = 0; d.vy = 0; g.shake = 6; g.log('🌊 A tsunami is racing toward the coasts!', 'disaster', x, y, '#6cf', true); break;
   }
   g.disasters.push(d);
 }
@@ -162,6 +163,62 @@ export function updateDisasters(g: Game): void {
         if (d.kind === 'acid' && d.t % 10 === 0) g.spatial.query(d.x, d.y, d.r, u => { if (!UDEF[u.kind].flying) g.damageUnit(u, 2, null); });
         break;
       }
+      case 'fallout': {
+        // the radioactive cloud drifts with the wind, sickening everything beneath it
+        d.x += d.vx;
+        d.y += d.vy;
+        if (d.t % 40 === 0) d.r = Math.min(d.a, d.r + 0.4);
+        const fade = 1 - d.t / d.life;
+        if (d.t % 8 === 0) {
+          g.spatial.query(d.x, d.y, d.r, (u, d2) => {
+            if (UDEF[u.kind].flying || u.inBoat) return;
+            if (u.kind === UK.PERSON || UDEF[u.kind].herb || UDEF[u.kind].pred) g.damageUnit(u, (4 + 10 * fade) * (1 - Math.sqrt(d2) / (d.r + 1)), null);
+          });
+        }
+        for (let s = 0; s < 6; s++) {
+          const tx = Math.floor(d.x + g.rng.range(-d.r, d.r)), ty = Math.floor(d.y + g.rng.range(-d.r, d.r));
+          if (!w.inb(tx, ty) || Math.hypot(tx - d.x, ty - d.y) > d.r) continue;
+          const i = ty * w.w + tx;
+          w.poll[i] = Math.min(255, w.poll[i] + Math.round(30 * fade));
+          if (w.flora[i] === F.CROP) w.fstate[i] = 0;
+          else if (isTree(w.flora[i]) && g.rng.chance(0.06 * fade)) w.setFlora(i, F.DEAD);
+        }
+        break;
+      }
+      case 'tsunami': {
+        // an expanding ring of water: everything on the coast in its path is swept away
+        d.r += 0.28;
+        const n = Math.ceil(d.r * 5);
+        for (let s = 0; s < n; s++) {
+          const ang = (s / n) * Math.PI * 2 + g.rng.next() * 0.05;
+          const tx = Math.floor(d.x + Math.cos(ang) * d.r), ty = Math.floor(d.y + Math.sin(ang) * d.r);
+          if (!w.inb(tx, ty)) continue;
+          const i = ty * w.w + tx;
+          if (w.isWater(i)) continue;
+          if (!nearWater(w, tx, ty, 3)) continue;
+          const t = w.ter[i];
+          if (TER[t].elev >= 5) continue; // hills and mountains break the wave
+          const bid = w.bld[i];
+          if (bid) { const b = g.bldById.get(bid); if (b) g.damageBuilding(b, b.maxHp * 0.45, null); }
+          if (w.flora[i] !== F.NONE && g.rng.chance(0.5)) w.setFlora(i, F.NONE);
+          if (w.fire[i]) w.fire[i] = 0;
+          if (t === T.FARM || t === T.GRASS || t === T.SAVANNA) { if (g.rng.chance(0.25)) w.setTer(i, T.SAND); }
+          else if (t === T.SAND && g.rng.chance(0.08)) w.setTer(i, T.SHALLOW);
+        }
+        if (d.t % 3 === 0) {
+          g.spatial.query(d.x, d.y, d.r + 1, (u, d2) => {
+            const dd = Math.sqrt(d2);
+            if (dd < d.r - 1.5 || UDEF[u.kind].flying || UDEF[u.kind].aquatic) return;
+            const i = w.tileAt(u.x, u.y);
+            if (i < 0 || !nearWater(w, Math.floor(u.x), Math.floor(u.y), 3)) return;
+            g.damageUnit(u, u.kind === UK.BOAT ? 120 : 45, null);
+            u.x = Math.max(0.5, Math.min(w.w - 0.5, u.x + (u.x - d.x) / (dd || 1) * 0.6));
+            u.y = Math.max(0.5, Math.min(w.h - 0.5, u.y + (u.y - d.y) / (dd || 1) * 0.6));
+            u.path = null;
+          });
+        }
+        break;
+      }
       case 'meteors': {
         if (d.t % 12 === 0) {
           const tx = d.x + g.rng.range(-d.r, d.r), ty = d.y + g.rng.range(-d.r, d.r);
@@ -176,6 +233,83 @@ export function updateDisasters(g: Game): void {
 
 export function spawnMeteor(g: Game, x: number, y: number): void {
   g.shoot(P.METEOR, x - 18, y - 40, x, y, 0, 4, null, null);
+}
+
+function nearWater(w: Game['world'], x: number, y: number, r: number): boolean {
+  for (let dy = -r; dy <= r; dy += r) for (let dx = -r; dx <= r; dx += r) {
+    if (!w.inb(x + dx, y + dy)) continue;
+    if (w.isWater((y + dy) * w.w + x + dx)) return true;
+  }
+  for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+    if (w.inb(x + dx, y + dy) && w.isWater((y + dy) * w.w + x + dx)) return true;
+  }
+  return false;
+}
+
+/** Radioactive fallout drifting downwind from a nuclear blast. */
+export function startFallout(g: Game, x: number, y: number, R: number): void {
+  const ang = g.rng.next() * Math.PI * 2;
+  const sp = g.rng.range(0.015, 0.035);
+  g.disasters.push({ kind: 'fallout', x, y, vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp, t: 0, life: TPY * 5, r: R * 0.7, a: R * 1.3 });
+}
+
+/** A city-killing asteroid: a huge crater, a firestorm and an impact winter. */
+export function spawnAsteroid(g: Game, x: number, y: number): void {
+  g.shoot(P.METEOR, x - 40, y - 90, x, y, 0, 16, null, null);
+  g.log('☄ A giant asteroid is falling from the sky!', 'disaster', x, y, '#fc6', true);
+}
+
+export function asteroidImpact(g: Game, x: number, y: number, R: number): void {
+  const w = g.world;
+  g.shake = 30;
+  g.flash = 0.8;
+  g.nuclearWinter += 1.2;
+  g.emit({ kind: 'nuke', x, y, r: R * 0.8 });
+  g.spatial.query(x, y, R * 1.4, (u, d2) => {
+    const d = Math.sqrt(d2);
+    g.damageUnit(u, d < R * 0.7 ? 1e6 : 900 * (1 - d / (R * 1.4)), null, null);
+  });
+  const r0 = Math.ceil(R * 1.4);
+  for (let dy = -r0; dy <= r0; dy++) for (let dx = -r0; dx <= r0; dx++) {
+    const d = Math.hypot(dx, dy);
+    const tx = Math.floor(x) + dx, ty = Math.floor(y) + dy;
+    if (d > r0 || !w.inb(tx, ty)) continue;
+    const i = ty * w.w + tx;
+    const bid = w.bld[i];
+    if (bid && d < R * 1.2) { const b = g.bldById.get(bid); if (b) g.damageBuilding(b, d < R ? 1e6 : b.maxHp * 0.6, null); }
+    if (d < R * 0.35) { w.lower(i); w.lower(i); if (d < R * 0.2) w.lower(i); }
+    else if (d < R * 0.5 && !w.isWater(i)) w.setTer(i, g.rng.chance(0.5) ? T.MOUNTAIN : T.HILLS);
+    else if (d < R && !w.isWater(i) && TER[w.ter[i]].elev === 4) w.setTer(i, T.ASH);
+    if (d < R && w.flora[i]) w.setFlora(i, F.NONE);
+    if (d < R * 1.3 && g.rng.chance(0.3)) w.ignite(i, 160);
+  }
+  for (const c of g.cities.slice()) if (Math.hypot(c.x - x, c.y - y) < R && c.members.length === 0) g.destroyCity(c, 'obliterated by an asteroid');
+  // ocean impacts raise a tsunami
+  const ci = w.tileAt(x, y);
+  if (ci >= 0 && w.isWater(ci)) startDisaster(g, 'tsunami', x, y);
+  else startDisaster(g, 'earthquake', x, y);
+}
+
+/** A solar flare: power grids fail, aircraft fall from the sky and research stalls for years. */
+export function solarFlare(g: Game): number {
+  g.flareT = TPY * 2;
+  let n = 0;
+  for (const u of g.units) if (u.kind === UK.PLANE && !u.dead) { g.killUnit(u, null); n++; }
+  for (const p of g.projectiles) if ((p.kind === P.MISSILE || p.kind === P.CRUISE) && !p.dead) p.t = 1e9, p.dead = true;
+  g.projectiles = g.projectiles.filter(p => !p.dead);
+  let hit = 0;
+  for (const k of g.kingdoms) if (k.caps.lights >= 2) { k.blackoutT = g.tick + TPY * 2; hit++; }
+  g.log(`🌞 A massive solar flare knocked out the power grids of ${hit} nation${hit === 1 ? '' : 's'}${n ? ` and downed ${n} aircraft` : ''}`, 'disaster', -1, -1, '#fd6', true);
+  return hit;
+}
+
+/** A pandemic spreads through several of the largest cities at once. */
+export function pandemic(g: Game): number {
+  const cities = g.cities.slice().sort((a, b) => b.members.length - a.members.length).slice(0, 6);
+  let n = 0;
+  for (const c of cities) n += plagueOutbreak(g, c.x, c.y, 9);
+  if (n) g.log(`🦠 A global pandemic broke out — ${n} infected across ${cities.length} cities`, 'disaster', cities[0]?.x ?? -1, cities[0]?.y ?? -1, '#9c6', true);
+  return n;
 }
 
 export function alienInvasion(g: Game, x: number, y: number): void {

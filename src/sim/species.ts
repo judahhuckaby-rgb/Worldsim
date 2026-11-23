@@ -110,7 +110,10 @@ export function kingdomTitle(baseName: string, era: number, speciesId: number, a
     case 6: return grukh ? `${baseName} War State` : `${baseName} Republic`;
     case 7: return `${baseName} Federation`;
     case 8: return `United ${baseName}`;
-    default: return `${baseName} Star Union`;
+    case 9: return `${baseName} Star Union`;
+    case 10: return grukh ? `${baseName} Void Horde` : `${baseName} Solar Commonwealth`;
+    case 11: return `${baseName} Collective`;
+    default: return grukh ? `${baseName} Star Dominion` : `Galactic Republic of ${baseName}`;
   }
 }
 

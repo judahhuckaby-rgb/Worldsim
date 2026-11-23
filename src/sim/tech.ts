@@ -1,4 +1,4 @@
-// The technology tree: Stone Age -> Space Age.
+// The technology tree: Stone Age -> Galactic Age.
 
 export const ERAS = [
   { name: 'Stone Age', short: 'Stone', color: [150, 130, 110] },
@@ -11,6 +11,9 @@ export const ERAS = [
   { name: 'Atomic Age', short: 'Atomic', color: [120, 220, 80] },
   { name: 'Information Age', short: 'Info', color: [40, 210, 220] },
   { name: 'Space Age', short: 'Space', color: [250, 240, 140] },
+  { name: 'Interplanetary Age', short: 'Interplan.', color: [255, 150, 80] },
+  { name: 'Singularity Age', short: 'Singular.', color: [190, 120, 255] },
+  { name: 'Galactic Age', short: 'Galactic', color: [255, 120, 200] },
 ] as const;
 export const NUM_ERAS = ERAS.length;
 
@@ -31,7 +34,7 @@ export interface Caps {
   lights: number;      // 0 none, 1 torches, 2 electric
   ship: number;        // -1 none .. 5
   air: number;         // -1 none .. 3
-  tower: number;       // -1 none, 0 arrows, 1 cannon, 2 guns, 3 missiles, 4 lasers
+  tower: number;       // -1 none, 0 arrows, 1 cannon, 2 guns, 3 missiles, 4 lasers, 5 railguns, 6 plasma
   farms: boolean;
   roads: number;       // 0 none, 1 dirt, 2 paved
   buildings: Set<string>;
@@ -39,6 +42,10 @@ export interface Caps {
   nukes: boolean;
   space: boolean;
   colonize: boolean;
+  cruise: boolean;     // guided cruise missiles
+  orbital: boolean;    // orbital strike platforms
+  shield: number;      // chance to intercept incoming missiles
+  yieldMult: number;   // warhead yield multiplier
   healRate: number;
   soldierRatio: number;
 }
@@ -48,7 +55,7 @@ export function baseCaps(): Caps {
     era: 0, houseCap: 3, foodMult: 1, woodMult: 1, mineMult: 1, researchMult: 1, buildMult: 1,
     speedMult: 1, growthMult: 1, lifeMult: 1, plagueResist: 0, loyalty: 0, pollution: 0, lights: 0,
     ship: -1, air: -1, tower: -1, farms: false, roads: 0, buildings: new Set(['center', 'house']),
-    extract: new Set([0, 1]), nukes: false, space: false, colonize: false, healRate: 0.02, soldierRatio: 0.12,
+    extract: new Set([0, 1]), nukes: false, space: false, colonize: false, cruise: false, orbital: false, shield: 0, yieldMult: 1, healRate: 0.02, soldierRatio: 0.12,
   };
 }
 
@@ -127,8 +134,9 @@ const RAW: TD[] = [
   t('fertilizer', 'Fertilizers', 6, 'eco', ['sanitation', 'industrialization'], 'Chemical farming feeds billions.', c => { c.foodMult *= 1.4; }),
   // ---- Atomic
   t('fission', 'Nuclear Fission', 7, 'sci', ['radio', 'massprod'], 'Split the atom. Uranium mining.', c => { c.extract.add(6); c.researchMult *= 1.1; }),
-  t('rocketry', 'Rocketry', 7, 'mil', ['flight'], 'Guided missiles defend cities.', c => { c.tower = Math.max(c.tower, 3); }),
+  t('rocketry', 'Rocketry', 7, 'mil', ['flight'], 'Guided missiles defend cities and strike enemy ones.', c => { c.tower = Math.max(c.tower, 3); c.cruise = true; }),
   t('nukes', 'Nuclear Weapons', 7, 'mil', ['fission', 'rocketry'], 'The power to end worlds. Missile Silos.', c => { c.nukes = true; c.buildings.add('silo'); }),
+
   t('computers', 'Computers', 7, 'sci', ['radio', 'massprod'], 'Thinking machines. Research Labs.', c => { c.buildings.add('lab'); c.researchMult *= 1.15; }),
   t('jets', 'Jet Engines', 7, 'mil', ['flight', 'rocketry'], 'Supersonic jets.', c => { c.air = Math.max(c.air, 2); }),
   t('antibiotics', 'Antibiotics', 7, 'civ', ['sanitation', 'fertilizer'], 'Disease defeated.', c => { c.plagueResist += 0.3; c.lifeMult *= 1.15; c.healRate *= 1.5; }),
@@ -143,10 +151,34 @@ const RAW: TD[] = [
   // ---- Space
   t('spaceflight', 'Space Flight', 9, 'sci', ['satellites', 'rocketry'], 'Rockets reach orbit. Spaceports.', c => { c.space = true; c.buildings.add('spaceport'); }),
   t('fusion', 'Fusion Power', 9, 'eco', ['renewables', 'fission'], 'Limitless clean energy.', c => { c.pollution = Math.min(c.pollution, 0.05); c.mineMult *= 1.3; c.houseCap += 2; }),
-  t('ai', 'Artificial Intelligence', 9, 'sci', ['internet', 'robotics'], 'Minds beyond our own.', c => { c.researchMult *= 1.25; c.buildMult *= 1.3; }),
+  t('ai', 'Artificial Intelligence', 9, 'sci', ['internet', 'robotics'], 'Minds beyond our own. AI stealth bombers.', c => { c.researchMult *= 1.25; c.buildMult *= 1.3; c.air = Math.max(c.air, 4); }),
   t('lasers', 'Laser Weapons', 9, 'mil', ['composites', 'fusion'], 'Directed energy weapons.', c => { c.tower = 4; }),
   t('mechs', 'Mech Suits', 9, 'mil', ['robotics', 'composites'], 'Walking war machines.', () => {}),
-  t('colonization', 'Interstellar Colonization', 9, 'sci', ['spaceflight', 'fusion', 'ai'], 'Colony ships to the stars. Launch 5 to ascend.', c => { c.colonize = true; }),
+  t('colonization', 'Interstellar Colonization', 12, 'sci', ['warpdrive', 'terraforming'], 'Colony ships to the stars. Launch 5 to ascend.', c => { c.colonize = true; }),
+  // ---- later additions (appended so old saves keep their tech indices)
+  t('hbomb', 'Thermonuclear Bomb', 8, 'mil', ['nukes', 'computers'], 'Hydrogen bombs: far bigger warheads.', c => { c.yieldMult = Math.max(c.yieldMult, 1.6); }),
+  t('missiledefense', 'Missile Defense', 8, 'mil', ['satellites', 'rocketry'], 'Interceptors shoot down some incoming missiles.', c => { c.shield = Math.max(c.shield, 0.25); }),
+  // ---- Interplanetary
+  t('orbitalhabitats', 'Orbital Habitats', 10, 'civ', ['spaceflight', 'fusion'], 'Stations in orbit. Bigger homes below.', c => { c.houseCap += 2; c.growthMult *= 1.1; }),
+  t('asteroidmining', 'Asteroid Mining', 10, 'eco', ['spaceflight', 'robotics'], 'Metal rains down from the belt.', c => { c.mineMult *= 1.5; c.woodMult *= 1.2; }),
+  t('maglev', 'Maglev Networks', 10, 'eco', ['fusion', 'ai'], 'Floating trains and smart roads.', c => { c.speedMult *= 1.15; c.buildMult *= 1.2; }),
+  t('railguns', 'Railguns', 10, 'mil', ['lasers', 'fusion'], 'Magnetic cannons. Railgun troops and batteries.', c => { c.tower = Math.max(c.tower, 5); }),
+  t('orbitalstrike', 'Orbital Weapons', 10, 'mil', ['spaceflight', 'lasers'], 'Kinetic rods dropped from orbit.', c => { c.orbital = true; }),
+  t('cybernetics', 'Cybernetics', 10, 'civ', ['genetics', 'ai'], 'Machine-enhanced bodies. Cyborg soldiers.', c => { c.lifeMult *= 1.3; c.healRate *= 1.5; }),
+  t('marscolony', 'Mars Colony', 10, 'sci', ['orbitalhabitats', 'asteroidmining'], 'Cities on another world.', c => { c.researchMult *= 1.2; }),
+  // ---- Singularity
+  t('nanotech', 'Nanotechnology', 11, 'eco', ['asteroidmining', 'cybernetics'], 'Self-assembling buildings.', c => { c.buildMult *= 1.4; c.mineMult *= 1.3; }),
+  t('quantum', 'Quantum Computing', 11, 'sci', ['ai', 'marscolony'], 'Computers beyond imagination.', c => { c.researchMult *= 1.3; }),
+  t('plasma', 'Plasma Weapons', 11, 'mil', ['railguns', 'nanotech'], 'Star-hot plasma guns and gunships.', c => { c.tower = Math.max(c.tower, 6); c.air = Math.max(c.air, 5); }),
+  t('shields', 'Energy Shields', 11, 'mil', ['quantum', 'missiledefense'], 'Shield domes stop most missiles and warheads.', c => { c.shield = Math.max(c.shield, 0.6); }),
+  t('arcologies', 'Arcologies', 11, 'civ', ['nanotech', 'orbitalhabitats'], 'Whole cities in one tower.', c => { c.houseCap += 3; }),
+  t('mindupload', 'Mind Uploading', 11, 'civ', ['quantum', 'cybernetics'], 'Minds live on in machines.', c => { c.lifeMult *= 1.5; c.loyalty += 10; }),
+  // ---- Galactic
+  t('antimatter', 'Antimatter', 12, 'sci', ['quantum', 'plasma'], 'Antimatter power and city-killing bombs.', c => { c.researchMult *= 1.15; c.yieldMult = Math.max(c.yieldMult, 2.4); }),
+  t('warpdrive', 'Warp Drive', 12, 'sci', ['antimatter', 'marscolony'], 'Faster than light.', c => { c.speedMult *= 1.1; }),
+  t('titans', 'Titan Walkers', 12, 'mil', ['plasma', 'nanotech'], 'Colossal war machines.', () => {}),
+  t('terraforming', 'Planetary Engineering', 12, 'eco', ['nanotech', 'arcologies'], 'Reshape the world: clean air, endless food.', c => { c.foodMult *= 1.5; c.pollution = 0; }),
+  t('dyson', 'Dyson Swarm', 12, 'eco', ['antimatter', 'orbitalhabitats'], 'Harness the whole sun.', c => { c.researchMult *= 1.3; c.buildMult *= 1.3; }),
 ];
 
 export const BASE_COST = 150;
@@ -154,7 +186,14 @@ export const ERA_GROWTH = 1.95;
 
 // modern eras take longer: each discovery needs ever larger research programs
 const lateEra = (e: number) => 1 + Math.max(0, e - 4) * 0.4;
-export const TECHS: TechDef[] = RAW.map((r, i) => ({ ...r, idx: i, cost: Math.round(BASE_COST * Math.pow(ERA_GROWTH, r.era) * lateEra(r.era) * (r.req.length > 1 ? 1.1 : 1)) }));
+// From the Modern Age on, growing research output (labs, computers, AI) carries the load, so
+// per-technology costs climb gently and every age up to the Galactic stays reachable.
+const LATE_COST = [5500, 6500, 7500, 8500, 10000, 11500, 13000];
+function eraCost(e: number): number {
+  if (e >= 6) return LATE_COST[Math.min(LATE_COST.length - 1, e - 6)];
+  return BASE_COST * Math.pow(ERA_GROWTH, e) * lateEra(e);
+}
+export const TECHS: TechDef[] = RAW.map((r, i) => ({ ...r, idx: i, cost: Math.round(eraCost(r.era) * (r.req.length > 1 ? 1.1 : 1)) }));
 export const NUM_TECH = TECHS.length;
 export const TECH_BY_ID: Record<string, TechDef> = {};
 for (const td of TECHS) TECH_BY_ID[td.id] = td;

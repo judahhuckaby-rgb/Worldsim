@@ -149,7 +149,7 @@ export class Renderer {
       case 'explosion': base.life = 0.55 + base.r * 0.05; break;
       case 'collapse': base.life = 0.9; break;
       case 'death': base.life = 0.6; break;
-      case 'nuke': base.life = 4.5; break;
+      case 'nuke': base.life = 5 + Math.min(4, base.r / 8); break;
       case 'fireworks': base.life = 2.5; break;
       case 'rocket': base.life = 5; break;
       case 'smoke': base.life = 2.2; base.vx = (Math.random() - 0.5) * 0.5; base.vy = -0.6; break;
@@ -242,6 +242,19 @@ export class Renderer {
       else this.drawNight(ctx, ox, oy, z, art, vx0, vx1, vy0, vy1);
     }
 
+    if (g.flareT > 0) {
+      // solar flare aurora
+      const a = Math.min(1, g.flareT / 120) * 0.22;
+      for (let b = 0; b < 3; b++) {
+        const yy = vh * (0.08 + b * 0.07) + Math.sin(this.time * 0.8 + b) * vh * 0.02;
+        const grd = ctx.createLinearGradient(0, yy - vh * 0.08, 0, yy + vh * 0.08);
+        grd.addColorStop(0, 'rgba(0,0,0,0)');
+        grd.addColorStop(0.5, b === 1 ? `rgba(200,90,255,${a})` : `rgba(80,255,150,${a})`);
+        grd.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = grd;
+        ctx.fillRect(0, yy - vh * 0.08, vw, vh * 0.16);
+      }
+    }
     if (this.showNames) this.drawLabels(ctx, ox, oy, z);
     this.drawSelection(ctx, ox, oy, z, art);
     this.drawCursor(ctx, ox, oy, z);
@@ -397,16 +410,36 @@ export class Renderer {
           if (Math.random() < 0.6) this.addFx({ kind: 'smoke', x: p.x, y: p.y - p.z, r: 0.8, color: '#ccc' });
           break;
         }
+        case P.CRUISE: {
+          const dx = (p.tx - p.sx), dy = (p.ty - p.sy);
+          const d = Math.sqrt(dx * dx + dy * dy) || 1;
+          ctx.strokeStyle = '#ddd';
+          ctx.lineWidth = Math.max(1.5, art * 1.3);
+          ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(sx - (dx / d) * art * 4, sy - (dy / d) * art * 4); ctx.stroke();
+          ctx.fillStyle = '#ffb02e';
+          ctx.fillRect(sx - (dx / d) * art * 5 - art * 0.6, sy - (dy / d) * art * 5 - art * 0.6, art * 1.2, art * 1.2);
+          if (Math.random() < 0.4) this.addFx({ kind: 'smoke', x: p.x, y: p.y - p.z, r: 0.5, color: '#bbb' });
+          break;
+        }
+        case P.ORBITAL: {
+          ctx.strokeStyle = 'rgba(160,220,255,0.8)';
+          ctx.lineWidth = Math.max(1.5, art * 1.4);
+          ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(sx + 6 * z * 0.25, sy - 70 * z * 0.25); ctx.stroke();
+          ctx.fillStyle = '#fff';
+          ctx.beginPath(); ctx.arc(sx, sy, Math.max(2, art * 1.6), 0, Math.PI * 2); ctx.fill();
+          break;
+        }
         case P.METEOR: {
           const tail = 6;
+          const big = p.aoe > 6 ? 3 : 1;
           ctx.strokeStyle = 'rgba(255,180,80,0.7)';
-          ctx.lineWidth = Math.max(2, art * 3);
+          ctx.lineWidth = Math.max(2, art * 3 * big);
           ctx.beginPath();
           ctx.moveTo(sx, sy);
           ctx.lineTo(sx - (p.tx - p.sx) * 0.08 * z * tail / 6, sy - (p.ty - p.sy) * 0.08 * z * tail / 6);
           ctx.stroke();
           ctx.fillStyle = '#ffd';
-          ctx.beginPath(); ctx.arc(sx, sy, Math.max(3, art * 3), 0, Math.PI * 2); ctx.fill();
+          ctx.beginPath(); ctx.arc(sx, sy, Math.max(3, art * 3 * big), 0, Math.PI * 2); ctx.fill();
           break;
         }
       }
@@ -463,6 +496,28 @@ export class Renderer {
         }
         case 'volcano': {
           if (Math.random() < 0.3) this.addFx({ kind: 'smoke', x: d.x + (Math.random() - 0.5), y: d.y - 1, r: 2, color: '#444' });
+          break;
+        }
+        case 'fallout': {
+          const fade = 1 - d.t / d.life;
+          const r = d.r * z;
+          const grd = ctx.createRadialGradient(sx, sy, 0, sx, sy, r);
+          grd.addColorStop(0, `rgba(170,200,60,${0.32 * fade + 0.05})`);
+          grd.addColorStop(0.7, `rgba(140,170,50,${0.18 * fade + 0.03})`);
+          grd.addColorStop(1, 'rgba(120,150,40,0)');
+          ctx.fillStyle = grd;
+          ctx.beginPath(); ctx.arc(sx, sy, r, 0, Math.PI * 2); ctx.fill();
+          if (z > 2 && Math.random() < 0.3) this.addFx({ kind: 'sparkle', x: d.x + (Math.random() - 0.5) * d.r, y: d.y + (Math.random() - 0.5) * d.r, r: 0.6, color: '#cf4' });
+          break;
+        }
+        case 'tsunami': {
+          const k = d.t / d.life;
+          ctx.strokeStyle = `rgba(230,245,255,${0.85 * (1 - k)})`;
+          ctx.lineWidth = Math.max(2, z * 1.2);
+          ctx.beginPath(); ctx.arc(sx, sy, d.r * z, 0, Math.PI * 2); ctx.stroke();
+          ctx.strokeStyle = `rgba(60,140,220,${0.6 * (1 - k)})`;
+          ctx.lineWidth = Math.max(3, z * 2.4);
+          ctx.beginPath(); ctx.arc(sx, sy, Math.max(0, d.r - 1.6) * z, 0, Math.PI * 2); ctx.stroke();
           break;
         }
       }
@@ -524,6 +579,11 @@ export class Renderer {
         case 'nuke': {
           const r = f.r * z;
           const ring = Math.min(1, k * 3);
+          if (k < 0.08) { ctx.fillStyle = `rgba(255,255,240,${0.9 - k * 10})`; ctx.beginPath(); ctx.arc(sx, sy, r * (0.6 + k * 6), 0, Math.PI * 2); ctx.fill(); }
+          // shock wave
+          ctx.strokeStyle = `rgba(255,240,210,${0.7 * (1 - Math.min(1, k * 2.5))})`;
+          ctx.lineWidth = Math.max(2, z * 0.8);
+          ctx.beginPath(); ctx.arc(sx, sy, r * (0.3 + Math.min(1, k * 2.5) * 1.4), 0, Math.PI * 2); ctx.stroke();
           ctx.fillStyle = `rgba(255,${230 - k * 150},${120 - k * 100},${0.6 * (1 - k)})`;
           ctx.beginPath(); ctx.arc(sx, sy, r * (0.4 + ring), 0, Math.PI * 2); ctx.fill();
           // mushroom cloud
@@ -614,7 +674,7 @@ export class Renderer {
       if (b.dead || b.progress < 1) continue;
       if (b.x + b.w < vx0 || b.x > vx1 || b.y + b.h < vy0 || b.y - 6 > vy1) continue;
       const k = b.city.kingdom;
-      const lights = k.caps.lights;
+      const lights = k.blackoutT > this.g.tick ? Math.min(1, k.caps.lights) : k.caps.lights;
       if (lights === 0) continue;
       if (lights === 1 && b.type !== 'center' && b.type !== 'castle' && b.type !== 'temple' && (b.id % 3 !== 0)) continue;
       const img = lights >= 2 ? (b.style >= 9 ? neon : cool) : warm;

@@ -4,7 +4,7 @@ import { World } from './world';
 import { Unit, Building, City, Kingdom, ORD } from './entities';
 import { BLD, UK } from './defs';
 import { T, NUM_RES } from './terrain';
-import { NUM_TECH } from './tech';
+import { NUM_TECH, TECH_BY_ID, canResearch } from './tech';
 import { refreshStats } from './ai_units';
 
 function rle8(a: Uint8Array): string {
@@ -72,7 +72,7 @@ export function serialize(g: Game): string {
       res: k.res.map(r2), rel: Array.from(k.rel.entries()).map(([id, r]) => [id, r2(r.opinion), r.war ? 1 : 0, r.warStart, r.ally ? 1 : 0, r.truce, r2(r.exhaustion), r2(r.memory), r.trade ? 1 : 0, r.nap, r2(r.warScore)]),
       wh: k.warheads, nt: k.nuclearTested, nb: k.nukedBy, na: k.nukedAt, ln: Array.from(k.links),
       alive: k.alive, f: k.founded, king: k.king ? k.king.id : 0, l: k.launches, asc: k.ascended, nk: k.nukesLaunched, pp: k.peakPop, ey: k.eraYears, cs: k.colonyShips,
-      cap: k.capital ? k.capital.id : 0, dy: k.diedYear,
+      cap: k.capital ? k.capital.id : 0, dy: k.diedYear, pl: k.player ? 1 : 0, mob: k.mobilizeT,
     })),
     cities: g.cities.map(c => ({ id: c.id, n: c.name, k: c.kingdom.id, x: c.x, y: c.y, ctr: c.center ? c.center.id : 0, food: r2(c.food), loy: r2(c.loyalty), f: c.founded, lt: c.launchT, cq: c.conquered })),
     buildings: g.buildings.filter(b => !b.dead).map(b => [b.id, b.type, b.city.id, b.x, b.y, Math.round(b.hp), r2(b.progress), b.style]),
@@ -127,7 +127,11 @@ export function deserialize(json: string): Game {
   for (const kd of d.kingdoms) {
     const k = new Kingdom(kd.id, kd.n, kd.sp, kd.c);
     for (let i = 0; i < Math.min(NUM_TECH, kd.t.length); i++) k.techs[i] = kd.t.charCodeAt(i) === 49 ? 1 : 0;
+    // v1.2 saves: colonization was a Space Age tech; it now needs the Galactic Age
+    const col = TECH_BY_ID['colonization'].idx;
+    if (k.techs[col] && !k.techs[TECH_BY_ID['warpdrive'].idx]) k.techs[col] = 0;
     k.researching = kd.rs;
+    if (k.researching >= 0 && !canResearch(k.techs, k.researching)) { k.researching = -1; }
     k.progress = kd.pr;
     for (let i = 0; i < NUM_RES; i++) k.res[i] = kd.res[i] || 0;
     for (const r of kd.rel) k.rel.set(r[0], { opinion: r[1], war: !!r[2], warStart: r[3], ally: !!r[4], truce: r[5], exhaustion: r[6], memory: r[7], trade: !!r[8], nap: r[9] || 0, warScore: r[10] || 0 });
@@ -145,6 +149,8 @@ export function deserialize(json: string): Game {
     k.eraYears = kd.ey || [];
     k.colonyShips = kd.cs || 0;
     k.diedYear = kd.dy;
+    k.player = !!kd.pl;
+    k.mobilizeT = kd.mob || 0;
     g.refreshTechs(k);
     g.allKingdoms.push(k);
     g.kingdomById.set(k.id, k);

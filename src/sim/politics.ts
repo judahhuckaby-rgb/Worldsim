@@ -69,15 +69,24 @@ export function nuclearTest(g: Game, k: Kingdom, sx: number, sy: number): void {
   for (const o of g.kingdoms) if (o !== k) { const r = o.relation(k); r.opinion -= 8; r.memory += 4; }
 }
 
-export function launchNuke(g: Game, k: Kingdom, from: { cx: number; y: number }, tgt: City, why: string): void {
+export function launchNuke(g: Game, k: Kingdom, from: { cx: number; y: number }, tgt: City, why: string, quiet = false): void {
   k.lastLaunch = g.tick;
   k.warheads--;
   k.nukesLaunched++;
   const victim = tgt.kingdom;
   victim.nukedBy = k.id;
   victim.nukedAt = g.tick;
-  g.shoot(P.MISSILE, from.cx, from.y, tgt.x, tgt.y, 0, 10, null, null, k);
-  g.log(`☢ ${g.kName(k)} ${why} — a nuclear missile is inbound on ${tgt.name}!`, 'nuke', tgt.x, tgt.y, '#ff0', true);
+  g.shoot(P.MISSILE, from.cx, from.y, tgt.x + g.rng.range(-1.5, 1.5), tgt.y + g.rng.range(-1.5, 1.5), 0, 10, null, null, k);
+  if (!quiet) g.log(`☢ ${g.kName(k)} ${why} — a nuclear missile is inbound on ${tgt.name}!`, 'nuke', tgt.x, tgt.y, '#ff0', true);
+}
+
+/** Fire several warheads at the enemy's biggest cities (MIRVs from the Information Age on). */
+export function nuclearSalvo(g: Game, k: Kingdom, from: { cx: number; y: number }, enemy: Kingdom, n: number, why: string): number {
+  const cities = enemy.cities.filter(c => c.center).sort((a, b) => b.members.length - a.members.length);
+  n = Math.min(n, k.warheads, cities.length);
+  for (let i = 0; i < n; i++) launchNuke(g, k, from, cities[i], why, i > 0);
+  if (n > 1) g.log(`☢ ${g.kName(k)} launched ${n} warheads at ${g.kName(enemy)} — ${cities.slice(0, n).map(c => c.name).join(', ')}`, 'nuke', cities[0].x, cities[0].y, '#ff0', true);
+  return n;
 }
 
 /** Per-kingdom nuclear logic, called from kingdom special operations. */
@@ -89,16 +98,18 @@ export function nuclearPolicy(g: Game, k: Kingdom, silo: { cx: number; y: number
     if (k.warheads === 0) g.log(`${g.kName(k)} dismantled its last nuclear warhead`, 'treaty', -1, -1, '#9cf');
   }
   if (!k.caps.nukes || !silo) return;
-  // build warheads
-  const capN = 3 + k.cities.length + (k.wars > 0 ? 4 : 0);
-  if (!banned && k.warheads < capN && k.res[RES.URANIUM] >= 3 && k.res[RES.METAL] >= 15 && g.rng.chance(k.wars > 0 ? 0.35 : 0.15)) {
+  // build warheads (gold buys uranium on the world market)
+  const capN = 4 + k.cities.length + (k.wars > 0 ? 6 : 0);
+  if (!banned && k.res[RES.URANIUM] < 3 && k.res[RES.GOLD] >= 40) { k.res[RES.GOLD] -= 40; k.res[RES.URANIUM] += 3; }
+  if (!banned && k.warheads < capN && k.res[RES.URANIUM] >= 3 && k.res[RES.METAL] >= 12 && g.rng.chance(k.wars > 0 ? 0.5 : 0.2)) {
     k.res[RES.URANIUM] -= 3;
-    k.res[RES.METAL] -= 15;
+    k.res[RES.METAL] -= 12;
     k.warheads++;
     if (!k.nuclearTested) nuclearTest(g, k, silo.cx, silo.y);
   }
-  // withdrawing from the ban when facing annihilation
-  if (banned && k.wars > 0 && k.pop < k.peakPop * 0.5 && g.rng.chance(0.01)) {
+  // withdrawing from the ban when facing annihilation, or a nuclear-armed enemy
+  const nuclearFoe = k.wars > 0 && g.kingdoms.some(o => k.atWar(o) && o.warheads > 0);
+  if (banned && k.wars > 0 && (k.pop < k.peakPop * 0.5 || nuclearFoe) && g.rng.chance(nuclearFoe ? 0.04 : 0.01)) {
     const a = accord(g, 'nuclear_ban')!;
     a.signatories.delete(k.id);
     a.withdrawn.add(k.id);
@@ -106,26 +117,29 @@ export function nuclearPolicy(g: Game, k: Kingdom, silo: { cx: number; y: number
     for (const o of g.kingdoms) if (o !== k) { const r = o.relation(k); r.opinion -= 25; r.memory += 15; }
     return;
   }
-  if (banned || k.warheads <= 0 || !g.laws.nukes || k.wars === 0) return;
-  if (g.tick - k.lastLaunch < TPY * 2) return; // command & control: no rapid-fire launches
-  // retaliation: a nuclear power that was struck answers in kind
+  if (banned || k.warheads <= 0 || !g.laws.nukes || k.wars === 0 || k.player) return;
+  if (g.tick - k.lastLaunch < TPY * 0.75) return; // command & control: no rapid-fire launches
+  const doctrine = [0.15, 1, 3][g.laws.nukeDoctrine ?? 1];
+  const mirv = hasTech(k, 'hbomb') ? 3 : hasTech(k, 'computers') ? 2 : 1;
+  // retaliation: a nuclear power that was struck answers in kind, usually with everything it has
   if (k.nukedBy && g.tick - k.nukedAt < TPY * 4) {
     const att = g.kingdomById.get(k.nukedBy);
-    if (att && att.alive && k.atWar(att) && g.rng.chance(0.3)) {
-      const tgt = largestCity(att);
-      if (tgt) { launchNuke(g, k, silo, tgt, 'retaliated'); return; }
+    if (att && att.alive && k.atWar(att) && g.rng.chance(Math.min(0.95, 0.75 * Math.sqrt(doctrine)))) {
+      if (nuclearSalvo(g, k, silo, att, 1 + g.rng.int(mirv + 1), 'retaliated') > 0) { k.nukedBy = 0; return; }
     }
   }
-  // first use: desperation, tempered by deterrence
-  const desperate = k.pop < k.peakPop * 0.6 || (k.capital && k.capital.conquered === g.year) ? 5 : 1;
+  // first use: likelier when losing or desperate, tempered by deterrence
+  const desperate = k.pop < k.peakPop * 0.6 || (k.capital && k.capital.conquered === g.year) ? 4 : 1;
   for (const o of g.kingdoms) {
     if (!k.atWar(o)) continue;
-    const deter = o.warheads > 0 ? 0.25 : 1;
-    const losing = k.relation(o).warScore < o.relation(k).warScore - 30 ? 2.5 : 1;
-    const p = 0.0035 * desperate * deter * losing * SPECIES[k.species].aggression * (g.combatNukes > 0 ? 1.5 : 1);
+    const deter = o.warheads > 0 ? 0.35 : 1;
+    const losing = k.relation(o).warScore < o.relation(k).warScore - 20 ? 2.5 : 1;
+    const years = (g.tick - k.relation(o).warStart) / TPY;
+    const longWar = years > 6 ? 1.5 : 1;
+    const p = 0.02 * doctrine * desperate * deter * losing * longWar * SPECIES[k.species].aggression * (g.combatNukes > 0 ? 1.4 : 1);
     if (g.rng.chance(p)) {
-      const tgt = largestCity(o);
-      if (tgt) { launchNuke(g, k, silo, tgt, desperate > 1 ? 'in desperation launched a first strike' : 'launched a nuclear first strike'); return; }
+      const n = 1 + g.rng.int(mirv);
+      if (nuclearSalvo(g, k, silo, o, n, desperate > 1 ? 'in desperation launched a first strike' : 'launched a nuclear first strike') > 0) return;
     }
   }
 }
@@ -167,7 +181,8 @@ export function updateWorldPolitics(g: Game): void {
   // 2. nuclear weapons ban
   const powers = nuclearPowers(g);
   let ban = accord(g, 'nuclear_ban');
-  if (!ban && (g.combatNukes > 0 || powers.length >= 3) && members.length >= 2) {
+  // the horror of actual nuclear war (or a crowded nuclear club) moves the world to act
+  if (!ban && (g.combatNukes >= 3 || powers.length >= 4) && members.length >= 2) {
     const signers = members.filter(k => voteBan(g, k));
     if (signers.length >= Math.max(2, Math.ceil(members.length * 0.5))) {
       const host = signers.reduce((a, b) => (b.pop > a.pop ? b : a), signers[0]);
@@ -214,8 +229,8 @@ export function updateWorldPolitics(g: Game): void {
 
 function voteBan(g: Game, k: Kingdom): boolean {
   const nuclear = k.warheads > 0 || k.nuclearTested;
-  let p = nuclear ? 0.15 : 0.85;
-  if (g.combatNukes > 0) p += nuclear ? 0.25 : 0.1;
+  let p = nuclear ? 0.08 : 0.8;
+  if (g.combatNukes > 0) p += nuclear ? 0.12 : 0.1;
   if (g.lastNukeYear >= 0 && g.year - g.lastNukeYear < 20) p += 0.2;
   if (k.nukedBy) p += 0.3; // the victims of nuclear war push hardest
   p /= Math.sqrt(SPECIES[k.species].aggression);

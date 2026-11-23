@@ -64,6 +64,7 @@ function research(g: Game, k: Kingdom, pop: number): void {
   // sprawling empires lose efficiency to bureaucracy
   rate /= 1 + Math.max(0, k.cities.length - 6) * 0.045;
   if (k.ascended) rate *= 1.5;
+  if (k.blackoutT > g.tick) rate *= 0.25; // solar flare: the grid is down
   if (k.researching < 0) pickTech(g, k);
   if (k.researching < 0) { k.researchRate = 0; return; }
   // technology diffuses from known neighbours
@@ -173,11 +174,14 @@ function diplomacy(g: Game, k: Kingdom): void {
       const losing = r.warScore < o.relation(k).warScore - 20;
       if (losing) r.exhaustion += 1.5;
       const years = (g.tick - r.warStart) / TPY;
-      if (years > 6 && g.rng.chance(0.0012 * r.exhaustion * (losing ? 1.6 : 1))) g.makePeace(k, o);
-      else if (years > 50 && g.rng.chance(0.05)) g.makePeace(k, o);
+      if (k.player) { /* the player decides when to make peace */ }
+      else if (years > 6 && g.rng.chance(0.0012 * r.exhaustion * (losing ? 1.6 : 1))) {
+        if (o.player) g.log(`🏳 ${g.kName(k)} sued for peace with your nation`, 'peace', -1, -1, '#9f9', true);
+        g.makePeace(k, o);
+      } else if (years > 50 && g.rng.chance(0.05)) g.makePeace(k, o);
     } else if (g.laws.war) {
       const napActive = r.nap > g.tick;
-      if (g.tick > r.truce && k.wars < 2 && r.opinion < (napActive ? -60 : -18) && !r.ally && k.soldiers >= 3) {
+      if (!k.player && g.tick > r.truce && k.wars < 2 && r.opinion < (napActive ? -60 : -18) && !r.ally && k.soldiers >= 3) {
         const reachable = dist < 80 && (sameIsland(g, k, o) || k.caps.ship >= 0);
         // nuclear deterrence: few dare attack a nuclear power
         const deter = o.warheads > 0 ? (k.warheads > 0 ? 0.25 : 0.08) : 1;
@@ -191,7 +195,7 @@ function diplomacy(g: Game, k: Kingdom): void {
         }
       }
       // peaceful unification of small kin nations
-      if (o.species === k.species && r.opinion > 45 && o.cities.length <= 2 && o.pop < k.pop * 0.4 && dist < 70 && o.wars === 0 && g.rng.chance(0.006)) {
+      if (!o.player && o.species === k.species && r.opinion > 45 && o.cities.length <= 2 && o.pop < k.pop * 0.4 && dist < 70 && o.wars === 0 && g.rng.chance(0.006)) {
         const ro = o.relation(k);
         if (ro.opinion > 30) {
           for (const c of o.cities.slice()) g.captureCity(c, k, true, true);
@@ -298,7 +302,7 @@ function wars(g: Game, k: Kingdom): void {
 }
 
 /** Find a water tile in the same water body as (x,y) next to land near target. */
-function landingSpot(g: Game, x: number, y: number, target: { x: number; y: number }): { x: number; y: number } | null {
+export function landingSpot(g: Game, x: number, y: number, target: { x: number; y: number }): { x: number; y: number } | null {
   const w = g.world;
   const src = w.nearestWater(x, y, 4);
   if (src < 0) return null;
@@ -450,7 +454,7 @@ function specialOps(g: Game, k: Kingdom): void {
   const w = g.world;
   const atWar = k.wars > 0;
   // warships
-  if (atWar && k.caps.ship >= 1 && g.rng.chance(0.08)) {
+  if (atWar && k.caps.ship >= 1 && g.rng.chance(0.18)) {
     for (const c of k.cities) {
       const docks = c.find('docks');
       if (!docks) continue;
@@ -466,38 +470,18 @@ function specialOps(g: Game, k: Kingdom): void {
       break;
     }
   }
-  // air raids
-  if (atWar && k.caps.air >= 0 && g.rng.chance(0.12)) {
-    for (const c of k.cities) {
-      const base = c.find('airbase');
-      if (!base) continue;
-      const tgt = nearestEnemyCity(g, k, c, false);
-      if (!tgt || Math.hypot(tgt.x - c.x, tgt.y - c.y) > 130) continue;
-      if (k.res[RES.OIL] < 2 && k.caps.air < 3) break;
-      k.res[RES.OIL] = Math.max(0, k.res[RES.OIL] - 2);
-      const vc = Math.min(k.caps.air, PLANES.length - 1);
-      const n = 1 + Math.floor(k.caps.air / 2);
-      for (let j = 0; j < n; j++) {
-        const p = g.spawnUnit(UK.PLANE, base.cx + j * 0.8, base.cy);
-        p.kingdom = k;
-        p.vclass = vc;
-        p.mission = MISSION.BOMB;
-        p.mx = tgt.x + g.rng.range(-2, 2);
-        p.my = tgt.y + g.rng.range(-2, 2);
-        p.homeX = base.cx;
-        p.homeY = base.cy;
-        p.carryAmt = PLANES[vc].cap;
-        refreshStats(g, p);
-        p.hp = p.maxHp;
-      }
-      break;
-    }
-  }
+  if (atWar && !k.player) warStrikes(g, k);
   // world markets: buy strategic resources the homeland lacks
-  const imports: [number, number, number][] = [[RES.COAL, 25, 6], [RES.OIL, 25, 8], [RES.URANIUM, 15, 18], [RES.METAL, 40, 4]];
+  // (building stone and timber too, so stone-poor nations can still raise modern cities)
+  const imports: [number, number, number][] = [[RES.STONE, 60 + k.era * 15, 2], [RES.WOOD, 40 + k.era * 10, 2], [RES.COAL, 40, 5], [RES.OIL, 70 + k.era * 4, 6], [RES.URANIUM, 30, 14], [RES.METAL, 60 + k.era * 25, 3]];
+  // export surpluses to pay for it
+  for (const [r, price] of [[RES.METAL, 2], [RES.STONE, 1], [RES.OIL, 3], [RES.COAL, 2]] as [number, number][]) {
+    const extra = k.res[r] - (r === RES.METAL ? 600 : 400);
+    if (extra > 0) { const n = Math.min(40, Math.floor(extra)); k.res[r] -= n; k.res[RES.GOLD] += n * price; }
+  }
   for (const [r, want, price] of imports) {
-    if (!k.caps.extract.has(r) || k.res[r] >= want) continue;
-    const n = Math.min(4, Math.floor(k.res[RES.GOLD] / price));
+    if ((r > RES.STONE && !k.caps.extract.has(r)) || k.res[r] >= want || !hasTech(k, 'currency')) continue;
+    const n = Math.min(r <= RES.METAL ? 25 : 8, Math.floor(want - k.res[r]), Math.floor(k.res[RES.GOLD] * 0.5 / price));
     if (n > 0) { k.res[RES.GOLD] -= n * price; k.res[r] += n; }
   }
   // nuclear arsenal, deterrence, strikes and disarmament
@@ -529,4 +513,109 @@ function specialOps(g: Game, k: Kingdom): void {
     }
   }
   void w;
+}
+
+// ------------------------------------------------------------------ strategic strikes
+function enemyCities(g: Game, k: Kingdom): City[] {
+  const out: City[] = [];
+  for (const o of g.kingdoms) if (k.atWar(o)) for (const c of o.cities) if (c.center) out.push(c);
+  return out;
+}
+
+function nearestTarget(k: Kingdom, from: { x: number; y: number }, targets: City[], range: number): City | null {
+  let best: City | null = null, bd = range;
+  for (const c of targets) {
+    // prefer big, close cities
+    const d = Math.hypot(c.x - from.x, c.y - from.y) - Math.min(30, c.members.length * 0.1);
+    if (d < bd) { bd = d; best = c; }
+  }
+  void k;
+  return best;
+}
+
+/** Bombers, cruise missiles and orbital strikes: modern wars are fought from the air. */
+function warStrikes(g: Game, k: Kingdom): void {
+  const targets = enemyCities(g, k);
+  if (!targets.length) return;
+  const doctrine = [0.4, 1, 1.8][g.laws.nukeDoctrine ?? 1];
+  // air raids from every airbase
+  if (k.caps.air >= 0) {
+    let raids = 0;
+    for (const c of k.cities) {
+      if (raids >= 2) break;
+      const base = c.find('airbase');
+      if (!base || !g.rng.chance(0.45 * doctrine)) continue;
+      const tgt = nearestTarget(k, base, targets, 140 + k.caps.air * 40);
+      if (!tgt) continue;
+      if (launchAirRaid(g, k, c, tgt)) raids++;
+    }
+  }
+  // cruise missiles (Atomic Age onwards)
+  if (k.caps.cruise && g.rng.chance(0.3 * doctrine)) {
+    const src = k.cities.find(c => c.find('silo') || c.find('airbase') || c.find('spaceport'));
+    if (src) {
+      const tgt = nearestTarget(k, src, targets, 400);
+      if (tgt) launchCruise(g, k, src, tgt, 1 + Math.floor(k.era / 4));
+    }
+  }
+  // kinetic rods from orbit
+  if (k.caps.orbital && g.rng.chance(0.25 * doctrine)) {
+    const port = k.cities.find(c => c.find('spaceport'));
+    if (port) {
+      const tgt = targets[g.rng.int(targets.length)];
+      orbitalStrike(g, k, tgt, 1 + g.rng.int(2));
+    }
+  }
+}
+
+export function launchAirRaid(g: Game, k: Kingdom, from: City, tgt: City): boolean {
+  const base = from.find('airbase');
+  if (!base || k.caps.air < 0) return false;
+  if (k.res[RES.OIL] < 1 && k.caps.air < 3) {
+    if (k.res[RES.GOLD] < 8) return false;
+    k.res[RES.GOLD] -= 8; // buy fuel on the world market
+  } else k.res[RES.OIL] = Math.max(0, k.res[RES.OIL] - 1);
+  const vc = Math.min(k.caps.air, PLANES.length - 1);
+  const n = 2 + Math.floor(k.caps.air / 2);
+  for (let j = 0; j < n; j++) {
+    const p = g.spawnUnit(UK.PLANE, base.cx + j * 0.8, base.cy + (j % 2) * 0.8);
+    p.kingdom = k;
+    p.vclass = vc;
+    p.mission = MISSION.BOMB;
+    p.mx = tgt.x + g.rng.range(-3, 3);
+    p.my = tgt.y + g.rng.range(-3, 3);
+    p.homeX = base.cx;
+    p.homeY = base.cy;
+    p.carryAmt = PLANES[vc].cap;
+    refreshStats(g, p);
+    p.hp = p.maxHp;
+  }
+  if (g.rng.chance(0.15)) g.log(`✈ ${g.kName(k)} bombers are striking ${tgt.name}`, 'war', tgt.x, tgt.y, k.css);
+  return true;
+}
+
+export function launchCruise(g: Game, k: Kingdom, from: City, tgt: City, n: number): number {
+  let fired = 0;
+  for (let j = 0; j < n; j++) {
+    if (k.res[RES.METAL] < 4) break;
+    k.res[RES.METAL] -= 4;
+    const tx = tgt.x + g.rng.range(-4, 4), ty = tgt.y + g.rng.range(-4, 4);
+    g.shoot(P.CRUISE, from.x + g.rng.range(-1, 1), from.y - 1, tx, ty, 260 + k.era * 30, 3 + k.era * 0.12, null, null, k);
+    fired++;
+  }
+  if (fired && g.rng.chance(0.2)) g.log(`🚀 ${g.kName(k)} fired ${fired} cruise missile${fired > 1 ? 's' : ''} at ${tgt.name}`, 'war', tgt.x, tgt.y, k.css);
+  return fired;
+}
+
+export function orbitalStrike(g: Game, k: Kingdom, tgt: City, n: number): number {
+  let fired = 0;
+  for (let j = 0; j < n; j++) {
+    if (k.res[RES.METAL] < 8) break;
+    k.res[RES.METAL] -= 8;
+    const tx = tgt.x + g.rng.range(-5, 5), ty = tgt.y + g.rng.range(-5, 5);
+    g.shoot(P.ORBITAL, tx + 6, ty - 70, tx, ty, 0, 5, null, null, k);
+    fired++;
+  }
+  if (fired) g.log(`🛰 ${g.kName(k)} called down an orbital strike on ${tgt.name}`, 'war', tgt.x, tgt.y, k.css, g.rng.chance(0.3));
+  return fired;
 }

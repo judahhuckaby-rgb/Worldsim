@@ -90,6 +90,10 @@ export const SOLDIERS: SoldierDef[] = [
   { id: 'infantry', name: 'Modern Infantry', tech: 'composites', role: 'ranged', hp: 115, atk: 28, def: 5, range: 10, cd: 20, speed: 1.1, proj: 'bullet', aoe: 0, weapon: 'smartgun', antiAir: true, era: 8 },
   { id: 'laser', name: 'Laser Trooper', tech: 'lasers', role: 'ranged', hp: 140, atk: 46, def: 7, range: 12, cd: 24, speed: 1.15, proj: 'laser', aoe: 0, weapon: 'laser', antiAir: true, era: 9 },
   { id: 'mech', name: 'Battle Mech', tech: 'mechs', role: 'vehicle', hp: 900, atk: 80, def: 16, range: 11, cd: 40, speed: 1.2, proj: 'laser', aoe: 1.3, weapon: 'mech', needs: 2, vehicle: true, antiAir: true, era: 9 },
+  { id: 'railgunner', name: 'Railgunner', tech: 'railguns', role: 'ranged', hp: 170, atk: 70, def: 9, range: 14, cd: 28, speed: 1.2, proj: 'laser', aoe: 0, weapon: 'railgun', antiAir: true, era: 10 },
+  { id: 'cyborg', name: 'Cyborg', tech: 'cybernetics', role: 'melee', hp: 320, atk: 60, def: 14, range: 1.6, cd: 12, speed: 1.5, proj: 'none', aoe: 0, weapon: 'blade', era: 10 },
+  { id: 'plasma', name: 'Plasma Trooper', tech: 'plasma', role: 'ranged', hp: 230, atk: 95, def: 12, range: 13, cd: 26, speed: 1.25, proj: 'laser', aoe: 1, weapon: 'plasma', antiAir: true, era: 11 },
+  { id: 'titan', name: 'Titan Walker', tech: 'titans', role: 'vehicle', hp: 3200, atk: 260, def: 30, range: 15, cd: 50, speed: 1, proj: 'laser', aoe: 2.4, weapon: 'titan', needs: 2, vehicle: true, antiAir: true, era: 12 },
 ];
 export const SOLDIER_BY_ID: Record<string, number> = {};
 SOLDIERS.forEach((s, i) => (SOLDIER_BY_ID[s.id] = i));
@@ -111,6 +115,8 @@ export const PLANES: VehicleDef[] = [
   { name: 'Heavy Bomber', hp: 200, atk: 45, range: 0, cd: 10, speed: 0.2, cap: 8, proj: 'shell', aoe: 2.2 },
   { name: 'Jet Fighter', hp: 220, atk: 55, range: 0, cd: 8, speed: 0.38, cap: 6, proj: 'shell', aoe: 2 },
   { name: 'Strike Drone', hp: 160, atk: 70, range: 0, cd: 8, speed: 0.32, cap: 6, proj: 'shell', aoe: 2.2 },
+  { name: 'Stealth Bomber', hp: 320, atk: 110, range: 0, cd: 6, speed: 0.4, cap: 12, proj: 'shell', aoe: 3 },
+  { name: 'Plasma Gunship', hp: 600, atk: 170, range: 0, cd: 5, speed: 0.42, cap: 14, proj: 'shell', aoe: 3.4 },
 ];
 
 // ------------------------------------------------------------------ buildings
@@ -158,7 +164,7 @@ export const BLD: Record<string, BldDef> = {
 export const BLD_KEYS = Object.keys(BLD);
 
 export function houseCapacity(style: number, capsHouse: number): number {
-  return Math.max(2, Math.min(16, Math.round(capsHouse * (0.6 + style * 0.05))));
+  return Math.max(2, Math.min(20, Math.round(capsHouse * (0.6 + style * 0.05))));
 }
 
 export function buildingMaxHp(def: BldDef, style: number): number {

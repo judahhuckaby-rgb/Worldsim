@@ -9,9 +9,9 @@ import { refreshStats } from './ai_units';
 
 const DT = 20;
 // per-year rates by era: births per person, child and adult mortality
-const BIRTH = [0.04, 0.042, 0.042, 0.043, 0.044, 0.046, 0.044, 0.04, 0.035, 0.032];
-const CHILD_MORT = [0.028, 0.025, 0.022, 0.02, 0.015, 0.009, 0.004, 0.002, 0.0012, 0.0008];
-const ADULT_MORT = [0.012, 0.011, 0.01, 0.009, 0.007, 0.005, 0.003, 0.002, 0.0015, 0.001];
+const BIRTH = [0.04, 0.042, 0.042, 0.043, 0.044, 0.046, 0.044, 0.04, 0.035, 0.032, 0.031, 0.03, 0.03];
+const CHILD_MORT = [0.028, 0.025, 0.022, 0.02, 0.015, 0.009, 0.004, 0.002, 0.0012, 0.0008, 0.0006, 0.0005, 0.0004];
+const ADULT_MORT = [0.012, 0.011, 0.01, 0.009, 0.007, 0.005, 0.003, 0.002, 0.0015, 0.001, 0.0009, 0.0008, 0.0007];
 
 /** Street grid: every 5th row/column (offset from the town center) is a street. */
 export function onGrid(c: City, x: number, y: number): boolean {
@@ -114,6 +114,22 @@ export function updateCity(g: Game, c: City): void {
     }
   }
 
+  // urbanization: from the Industrial Age, villagers move to the capital, so great cities emerge
+  const capC = k.capital;
+  if (era >= 5 && fill > 0.85 && capC && capC !== c && !capC.dead && pop > 12 && capC.members.length < Math.min(capC.capacity, cityCap) - 2 && g.rng.chance(0.25)) {
+    const u = c.members.find(m => m.ageT >= ADULT_AGE * TPY && m.job !== JOB.SOLDIER && !m.isKing && !m.order && !m.inBoat);
+    if (u) {
+      g.removeFromCity(u);
+      g.addToCity(u, capC);
+      u.x = capC.x + g.rng.range(-3, 3);
+      u.y = capC.y + g.rng.range(-3, 3);
+      u.path = null;
+      u.phase = 0;
+      u.job = 0;
+      u.carry = -1;
+    }
+  }
+
   if (c.t2 % 3 === 0) assignJobs(g, c, adults);
   if (c.t2 % 2 === 0) planConstruction(g, c);
   expandTerritory(g, c);
@@ -199,6 +215,7 @@ function assignJobs(g: Game, c: City, adults: number): void {
   const atWar = k.wars > 0;
   let sr = caps.soldierRatio * Math.sqrt(sp.aggression) * (atWar ? 2.2 : 1) + (c.has('barracks') ? 0.05 : 0) + (c.has('castle') ? 0.04 : 0);
   if (n < 5) sr *= 0.5;
+  if (k.mobilizeT > g.tick) sr += 0.18; // general mobilization
   want[JOB.SOLDIER] = Math.max(0, Math.round(Math.min(0.45, sr) * (n + away)) - away);
   let sites = 0;
   for (const b of c.buildings) if (b.progress < 1) sites++;
@@ -298,13 +315,20 @@ function pay(k: City['kingdom'], cost: number[], mult = 1): void {
 
 function costFor(def: BldDef, era: number): { cost: number[]; mult: number } {
   if (def.key === 'house') {
-    const cost = [6 + era, era >= 1 ? 2 + era * 2 : 0, era >= 5 ? era - 3 : 0, 0, 0, 0, 0];
+    const cost = [6 + Math.min(era, 6), era >= 1 ? 2 + Math.min(era, 4) + (era >= 5 ? 2 : 0) : 0, era >= 5 ? Math.min(6, era - 3) : 0, 0, 0, 0, 0];
     return { cost, mult: 1 };
+  }
+  if (era >= 5 && def.cost[1] > 0) {
+    // steel and concrete: industrial nations build with metal instead of quarried stone
+    const cost = def.cost.slice();
+    cost[2] += Math.round(cost[1] * 0.3);
+    cost[1] = Math.round(cost[1] * 0.5);
+    return { cost, mult: 1 + era * 0.05 };
   }
   return { cost: def.cost, mult: 1 + era * 0.05 };
 }
 
-function footprintFree(g: Game, c: City, x: number, y: number, w: number, h: number, ignoreGap = false): boolean {
+function footprintFree(g: Game, c: City, x: number, y: number, w: number, h: number, ignoreGap = false, overRoads = false): boolean {
   const W = g.world;
   for (let dy = -1; dy <= h; dy++) {
     for (let dx = -1; dx <= w; dx++) {
@@ -314,7 +338,7 @@ function footprintFree(g: Game, c: City, x: number, y: number, w: number, h: num
       const inside = dx >= 0 && dy >= 0 && dx < w && dy < h;
       if (inside) {
         const t = W.ter[i];
-        if (!TER[t].build && t !== T.ROAD) return false;
+        if (!TER[t].build && t !== T.ROAD && !(overRoads && t === T.PAVED)) return false;
         if (W.bld[i]) return false;
         if (W.owner[i] && W.owner[i] !== c.id) return false;
         if (W.fire[i]) return false;
@@ -333,16 +357,18 @@ function inBlock(g: Game, c: City, x: number, y: number, w: number, h: number): 
   return true;
 }
 
-function findSpot(g: Game, c: City, def: BldDef): { x: number; y: number } | null {
+export function findSpot(g: Game, c: City, def: BldDef, outskirts = false): { x: number; y: number } | null {
   const W = g.world;
-  const R = 4 + Math.sqrt(c.tiles.length / 3.14);
-  const grid = c.kingdom.caps.roads >= 1 && def.place !== 'coast' && def.place !== 'mine' && def.w <= 4 && def.h <= 4;
+  const R = 4 + Math.sqrt(c.tiles.length / 3.14) + (outskirts ? 6 : 0);
+  // big complexes that no longer fit a city block go up on the outskirts instead
+  const grid = !outskirts && c.kingdom.caps.roads >= 1 && def.place !== 'coast' && def.place !== 'mine' && def.w <= 4 && def.h <= 4;
   const gx = Math.floor(c.x) + 2, gy = Math.floor(c.y) + 2;
   let best: { x: number; y: number } | null = null;
   let bs = -1e9;
   for (let tries = 0; tries < 90; tries++) {
     const ang = g.rng.next() * Math.PI * 2;
-    const rr = 2.5 + Math.sqrt(g.rng.next()) * R;
+    // outskirts: a ring just inside and beyond the city limits
+    const rr = outskirts ? R - 10 + g.rng.next() * 12 : 2.5 + Math.sqrt(g.rng.next()) * R;
     let x = Math.round(c.x + Math.cos(ang) * rr - def.w / 2);
     let y = Math.round(c.y + Math.sin(ang) * rr - def.h / 2);
     if (grid) {
@@ -353,7 +379,7 @@ function findSpot(g: Game, c: City, def: BldDef): { x: number; y: number } | nul
       y = gy + byI * 5 + 1 + (g.rng.chance(0.5) ? 0 : slackY);
       if (!inBlock(g, c, x, y, def.w, def.h)) continue;
     }
-    if (!footprintFree(g, c, x, y, def.w, def.h, grid)) continue;
+    if (!footprintFree(g, c, x, y, def.w, def.h, grid, outskirts)) continue;
     const cx = x + def.w / 2, cy = y + def.h / 2;
     const d = Math.hypot(cx - c.x, cy - c.y);
     let score = -d;
@@ -380,6 +406,7 @@ function findSpot(g: Game, c: City, def: BldDef): { x: number; y: number } | nul
   return best;
 }
 
+const NATIONAL = new Set(['silo', 'spaceport', 'airbase', 'lab']);
 const SPECIAL_ORDER = ['temple', 'mine', 'library', 'barracks', 'docks', 'tower', 'forge', 'market', 'university', 'hospital', 'castle', 'factory', 'power', 'lab', 'airbase', 'silo', 'spaceport', 'tower'];
 
 function planConstruction(g: Game, c: City): void {
@@ -399,7 +426,8 @@ function planConstruction(g: Game, c: City): void {
       cost = [0, cost[0] + cost[1], cost[2], 0, 0, 0, 0];
       if (!afford(k, cost, mult)) return false;
     }
-    const spot = findSpot(g, c, def);
+    let spot = findSpot(g, c, def);
+    if (!spot && (def.w >= 3 || def.h >= 3 || NATIONAL.has(key)) && def.place !== 'coast' && def.place !== 'mine') spot = findSpot(g, c, def, true);
     if (!spot) return false;
     pay(k, cost, mult);
     const b = g.placeBuilding(c, def, spot.x, spot.y, false);
@@ -416,10 +444,15 @@ function planConstruction(g: Game, c: City): void {
       const def = BLD[key];
       if (!caps.buildings.has(key)) continue;
       if (c.count(key) >= def.max) continue;
-      const national = key === 'silo' || key === 'spaceport' || key === 'airbase' || key === 'lab';
+      const national = NATIONAL.has(key);
       if (national) {
-        // national projects are built in the capital, sized by the whole nation
-        if (k.capital !== c || k.pop < def.minPop * 2) continue;
+        // national projects are sized by the whole nation and go up in the capital or any big city
+        if (k.pop < def.minPop * 2 || (k.capital !== c && pop < 20)) continue;
+        let have = 0;
+        for (const o of k.cities) have += o.count(key);
+        const n = k.cities.length;
+        const limit = key === 'airbase' ? 1 + Math.floor(n / 6) : key === 'silo' ? 1 + Math.floor(n / 10) : key === 'lab' ? 1 + Math.floor(n / 5) : 1;
+        if (have >= limit) continue;
       } else if (pop < def.minPop * 0.7) continue;
       if (key === 'tower' && c.count('tower') >= Math.min(def.max, 1 + Math.floor(pop / 25))) continue;
       if ((c.skip.get(key) || 0) > g.tick) continue;

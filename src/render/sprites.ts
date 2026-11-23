@@ -167,6 +167,9 @@ function helmet(p: Painter, id: string, ox: number, top: number): void {
     case 'gunner': p.rect(ox + 1, top - 1, 3, 1, [80, 100, 60]); p.rect(ox, top - 1, 5, 1, [80, 100, 60]); break;
     case 'infantry': p.rect(ox + 1, top - 1, 3, 1, [60, 64, 70]); p.px(ox + 3, top, [60, 200, 255]); break;
     case 'laser': p.rect(ox + 1, top - 1, 3, 1, WHITE); p.rect(ox + 2, top, 2, 1, [80, 230, 255]); break;
+    case 'railgunner': p.rect(ox, top - 1, 5, 1, [230, 230, 236]); p.rect(ox + 2, top, 3, 1, [255, 150, 60]); break;
+    case 'cyborg': p.rect(ox + 1, top - 1, 3, 1, [120, 126, 140]); p.px(ox + 3, top, [255, 40, 40]); p.px(ox + 4, top + 1, STEEL); break;
+    case 'plasma': p.rect(ox + 1, top - 1, 3, 1, [40, 34, 56]); p.rect(ox + 2, top, 3, 1, [200, 130, 255]); break;
   }
 }
 
@@ -183,6 +186,9 @@ function weapon(p: Painter, wpn: string, ox: number, by: number): void {
     case 'mg': p.rect(x - 1, by + 1, 5, 1, DARK); p.px(x, by + 2, DARK); break;
     case 'smartgun': p.rect(x - 1, by + 1, 4, 1, [30, 30, 34]); p.px(x + 2, by, [60, 200, 255]); break;
     case 'laser': p.rect(x - 1, by + 1, 4, 1, WHITE); p.px(x + 3, by + 1, [255, 60, 110]); break;
+    case 'railgun': p.rect(x - 1, by + 1, 5, 1, [200, 206, 216]); p.rect(x, by, 3, 1, [255, 150, 60]); p.px(x + 4, by + 1, [140, 220, 255]); break;
+    case 'blade': p.line(x, by + 2, x + 2, by - 1, [200, 230, 255]); p.px(x + 2, by - 2, [140, 220, 255]); break;
+    case 'plasma': p.rect(x - 1, by + 1, 4, 2, [50, 44, 70]); p.px(x + 3, by + 1, [220, 150, 255]); p.px(x + 1, by, [190, 120, 255]); break;
   }
 }
 
@@ -269,6 +275,19 @@ export function vehicleSprite(kind: string, color: RGB, frame: number): HTMLCanv
         p.rect(3, 13, 3, 1, DARK); p.rect(6, 13, 3, 1, DARK);
         p.rect(5, 6, 2, 1, color);
         p.px(6, 0, color); p.px(6, 1, DARK);
+      });
+    case 'titan':
+      return sprite(key, 18, 22, p => {
+        const body: RGB = [70, 64, 88];
+        p.box(4, 3, 10, 9, body);
+        p.rect(5, 4, 8, 1, [255, 140, 60]); p.rect(7, 6, 4, 2, [255, 200, 120]);
+        p.box(1, 4, 3, 7, shade(body, 0.85)); p.box(14, 4, 3, 7, shade(body, 0.85));
+        p.rect(15, 9, 3, 2, DARK); p.px(17, 9, [255, 140, 60]);
+        p.rect(0, 9, 2, 3, DARK);
+        p.rect(5, 12, 2, 9 - frame, shade(body, 0.7)); p.rect(11, 12, 2, 8 + frame, shade(body, 0.7));
+        p.rect(4, 21 - frame, 4, 1, DARK); p.rect(10, 20 + frame, 4, 1, DARK);
+        p.rect(7, 1, 4, 2, shade(body, 1.2)); p.px(8, 0, color); p.px(9, 0, color);
+        p.rect(6, 10, 6, 1, color);
       });
   }
   return sprite(key, 4, 4, p => p.rect(0, 0, 4, 4, color));
@@ -421,8 +440,18 @@ export function planeSprite(vclass: number, color: RGB, frame: number): HTMLCanv
         p.rect(1, 3, 13, 2, [160, 168, 178]); p.px(14, 4, GLASS); p.rect(5, 1, 3, 2, [130, 138, 150]); p.rect(5, 5, 3, 2, [130, 138, 150]);
         p.rect(0, 2, 2, 2, [130, 138, 150]); p.rect(0, 4, 1, 1, frame ? [255, 160, 60] : [255, 220, 120]); p.px(6, 2, color);
         break;
-      default: // drone
+      case 3: // drone
         p.rect(3, 3, 9, 2, [60, 64, 70]); p.rect(1, 2, 13, 1, [80, 84, 90]); p.px(12, 4, [255, 60, 60]); p.px(6, 3, color);
+        break;
+      case 4: // stealth bomber (flying wing)
+        for (let r = 0; r < 4; r++) p.rect(2 + r * 2, 1 + r, 12 - r * 3, 1, [36, 38, 46]);
+        p.rect(2, 4, 13, 1, [36, 38, 46]); p.rect(3, 5, 10, 1, [52, 54, 64]); p.px(13, 4, [90, 110, 140]); p.px(7, 3, color);
+        if (frame) p.px(1, 4, [120, 160, 255]);
+        break;
+      default: // plasma gunship
+        p.rect(2, 2, 12, 4, [70, 60, 96]); p.rect(3, 1, 8, 1, [96, 86, 126]); p.rect(14, 3, 2, 2, [200, 140, 255]);
+        p.rect(0, 1, 3, 1, [96, 86, 126]); p.rect(0, 6, 3, 1, [96, 86, 126]); p.rect(5, 6, 6, 1, frame ? [200, 140, 255] : [140, 90, 220]);
+        p.px(8, 3, color); p.px(9, 3, color);
         break;
     }
   });
@@ -454,14 +483,14 @@ export function buildingSprite(l: BldLook): HTMLCanvasElement {
   });
 }
 
-const HOUSE_H: number[][] = [[3], [4], [4], [6], [7], [8], [10, 5, 12], [14, 9, 18], [20, 12, 26], [22, 6, 15]];
+const HOUSE_H: number[][] = [[3], [4], [4], [6], [7], [8], [10, 5, 12], [14, 9, 18], [20, 12, 26], [22, 6, 15], [24, 10, 32], [28, 14, 38], [30, 16, 44]];
 
 export function buildingExtraHeight(type: string, style: number, variant = 0): number {
   switch (type) {
     case 'house': { const hs = HOUSE_H[style] || [6]; return hs[variant % hs.length]; }
-    case 'center': return [6, 8, 8, 12, 14, 14, 14, 20, 26, 30][style] ?? 10;
+    case 'center': return [6, 8, 8, 12, 14, 14, 14, 20, 26, 30, 44, 50, 56][style] ?? 10;
     case 'temple': return style >= 3 ? 14 : 6;
-    case 'tower': return style >= 7 ? 10 : 9;
+    case 'tower': return style >= 10 ? 12 : style >= 7 ? 10 : 9;
     case 'castle': return 10;
     case 'university': return 8;
     case 'factory': return 10;
@@ -553,8 +582,14 @@ function drawBuilding(p: Painter, W: number, H: number, l: BldLook, v: number): 
       } else if (s < 9) { // missile battery
         p.box(0, base - 5, 4, 5, CONCRETE); p.rect(0, base - 9, 1, 4, WHITE); p.rect(2, base - 10, 1, 5, WHITE); p.px(0, base - 10, [220, 40, 40]); p.px(2, base - 11, [220, 40, 40]);
         p.rect(3, base - 12, 1, 3, DARK); p.rect(2, base - 13, 2, 1, STEEL);
-      } else { // laser turret
+      } else if (s < 10) { // laser turret
         p.box(0, base - 6, 4, 6, [220, 226, 236]); p.rect(1, base - 10, 2, 4, [200, 206, 216]); p.rect(1, base - 11, 3, 1, [255, 60, 110]); p.px(1, base - 8, [80, 230, 255]);
+      } else if (s < 11) { // railgun battery
+        p.box(0, base - 7, 4, 7, [230, 226, 220]); p.rect(0, base - 5, 4, 1, [235, 130, 60]);
+        p.rect(1, base - 13, 1, 6, [200, 206, 216]); p.rect(2, base - 13, 1, 6, [150, 156, 166]); p.px(1, base - 14, [140, 220, 255]);
+      } else { // plasma spire
+        p.box(0, base - 6, 4, 6, [44, 40, 60]); p.rect(1, base - 13, 2, 7, [60, 54, 84]);
+        p.rect(0, base - 15, 4, 2, [200, 130, 255]); p.px(1, base - 16, [240, 210, 255]); p.px(1, base - 9, [190, 120, 255]);
       }
       return;
     }
@@ -664,6 +699,25 @@ function house(p: Painter, W: number, H: number, s: number, roofC: RGB, wallC: R
         p.rect(0, b - 15, 1, 15, shade(g, 1.25)); p.rect(0, b - 16, W, 1, [70, 140, 60]); p.px(2, b - 17, [90, 170, 70]); p.px(5, b - 17, [90, 170, 70]);
         return;
       }
+      case 10: { // glass biodome
+        p.rect(0, b - 2, W, 2, [200, 196, 190]);
+        const rows = [8, 8, 6, 6, 4, 2];
+        for (let r = 0; r < rows.length; r++) p.rect((W - rows[r]) / 2, b - 3 - r, rows[r], 1, r % 2 ? [170, 226, 244] : [150, 214, 236]);
+        p.px(2, b - 4, [80, 170, 70]); p.px(4, b - 5, [80, 170, 70]); p.px(5, b - 4, [100, 190, 80]); p.px(3, b - 3, [255, 150, 60]); p.px(6, b - 2, kc);
+        return;
+      }
+      case 11: { // hovering cube
+        p.rect(1, b - 2, W - 2, 2, [44, 40, 60]); p.rect(2, b - 3, W - 4, 1, [190, 120, 255]);
+        p.box(1, b - 13, W - 2, 7, [48, 42, 66]); p.rect(1, b - 10, W - 2, 1, [190, 120, 255]); p.rect(3, b - 12, 1, 5, [120, 80, 180]);
+        p.px(3, b - 5, [160, 100, 230]); p.px(4, b - 4, [160, 100, 230]); p.px(5, b - 13, kc);
+        return;
+      }
+      case 12: { // floating orb with ring
+        p.rect(2, b - 2, 4, 2, [240, 230, 246]); p.px(3, b - 3, [120, 240, 255]); p.px(4, b - 4, [120, 240, 255]);
+        p.rect(2, b - 13, 4, 1, [255, 214, 240]); p.rect(1, b - 12, 6, 4, [255, 214, 240]); p.rect(2, b - 8, 4, 1, [240, 190, 226]);
+        p.rect(0, b - 10, W, 1, [120, 240, 255]); p.px(2, b - 11, WHITE); p.px(5, b - 9, kc);
+        return;
+      }
       default: { // dome habitat
         const c: RGB = [236, 240, 246];
         p.rect(0, b - 3, W, 3, shade(c, 0.9));
@@ -688,6 +742,31 @@ function house(p: Painter, W: number, H: number, s: number, roofC: RGB, wallC: R
         const g: RGB = [50, 70, 110];
         p.rect(0, b - 30, W, 30, g); for (let y = b - 29; y < b; y += 2) p.rect(1, y, W - 2, 1, [90, 130, 180]);
         p.rect(0, b - 30, 1, 30, shade(g, 1.4)); p.rect(3, b - 34, 1, 4, DARK); p.px(3, b - 35, [255, 60, 60]);
+        return;
+      }
+      case 10: { // orbital needle with pods
+        const c: RGB = [236, 232, 224];
+        p.rect(3, b - 31, 2, 31, c); p.rect(4, b - 31, 1, 31, shade(c, 0.85));
+        p.box(1, b - 26, 6, 4, c); p.box(1, b - 15, 6, 4, c); p.rect(1, b - 24, 6, 1, [255, 150, 60]); p.rect(1, b - 13, 6, 1, [255, 150, 60]);
+        p.rect(0, b - 6, W, 6, shade(c, 0.95)); p.windows(1, b - 5, W, 4, 4, 2, [90, 200, 240], 0, 1);
+        p.px(3, b - 32, [255, 60, 60]);
+        return;
+      }
+      case 11: { // twisting obsidian tower
+        const c: RGB = [46, 40, 64];
+        for (let y = 0; y < 36; y += 4) { const off = ((y / 4) % 3) - 1; p.box(1 + off, b - 4 - y, 6, 4, shade(c, 0.9 + (y % 8) * 0.03)); p.rect(1 + off, b - 4 - y, 6, 1, [190, 120, 255]); }
+        p.rect(3, b - 38, 2, 2, [220, 170, 255]); p.px(3, b - 2, kc);
+        return;
+      }
+      case 12: { // galactic mega spire with halo rings
+        const c: RGB = [228, 224, 246];
+        for (let y = 0; y < 42; y++) {
+          const wv = y < 8 ? 8 : y < 20 ? 6 : y < 32 ? 4 : 2;
+          const x0 = (W - wv) / 2, hw = wv / 2;
+          p.rect(x0, b - 1 - y, hw, 1, y % 6 === 0 ? [250, 200, 236] : shade(c, 1.1));
+          p.rect(x0 + hw, b - 1 - y, hw, 1, y % 6 === 0 ? [210, 150, 200] : shade(c, 0.8));
+        }
+        p.rect(0, b - 22, W, 1, [120, 240, 255]); p.rect(1, b - 34, W - 2, 1, [120, 240, 255]); p.px(3, b - 43, WHITE); p.px(4, b - 44, [255, 255, 180]); p.px(4, b - 12, kc);
         return;
       }
       default: { // terraced arcology with gardens
@@ -761,6 +840,37 @@ function house(p: Painter, W: number, H: number, s: number, roofC: RGB, wallC: R
       for (let y = b - 23; y < b; y += 2) p.rect(0, y, W, 1, shade(g, 0.8));
       p.rect(0, b - 24, 1, 24, shade(g, 1.25)); p.rect(W - 1, b - 24, 1, 24, shade(g, 0.7));
       p.rect(2, b - 26, 4, 2, [150, 160, 170]); p.rect(4, b - 28, 1, 2, DARK); p.px(4, b - 29, [255, 60, 60]);
+      return;
+    }
+    case 10: { // interplanetary habitat tower with solar wings
+      const c: RGB = [232, 228, 220];
+      p.rect(1, b - 22, 6, 22, c); p.rect(6, b - 22, 1, 22, shade(c, 0.82));
+      for (let y = b - 20; y < b - 2; y += 5) p.rect(1, y, 6, 1, [235, 130, 60]);
+      p.windows(2, b - 18, 4, 14, 2, 4, [90, 200, 240], 1, 3);
+      p.rect(0, b - 24, W, 2, [50, 70, 140]); p.px(2, b - 24, [120, 150, 220]); p.px(5, b - 24, [120, 150, 220]);
+      p.px(4, b - 25, kc);
+      p.rect(3, b - 3, 2, 3, [255, 150, 60]);
+      return;
+    }
+    case 11: { // singularity monolith with glowing seams
+      const c: RGB = [42, 38, 58];
+      p.rect(0, b - 28, W, 28, c); p.rect(0, b - 28, 1, 28, shade(c, 1.4));
+      p.rect(2, b - 27, 1, 26, [190, 120, 255]); p.rect(5, b - 22, 1, 21, [150, 90, 220]);
+      p.rect(0, b - 14, W, 1, [190, 120, 255]); p.px(3, b - 29, kc); p.px(4, b - 29, kc);
+      p.rect(3, b - 3, 2, 3, [220, 170, 255]);
+      return;
+    }
+    case 12: { // crystal spire
+      const c: RGB = [226, 222, 244];
+      for (let y = 0; y < 30; y++) {
+        const wv = Math.max(2, 8 - Math.floor(y / 5) * 2 + (y < 5 ? 0 : 2));
+        const x0 = Math.floor((W - wv) / 2), hw = Math.ceil(wv / 2);
+        p.rect(x0, b - 1 - y, hw, 1, y % 6 === 0 ? [250, 200, 236] : shade(c, 1.12));
+        p.rect(x0 + hw, b - 1 - y, wv - hw, 1, y % 6 === 0 ? [214, 160, 206] : shade(c, 0.8));
+      }
+      p.rect(3, b - 22, 1, 14, [120, 240, 255]);
+      p.px(3, b - 31, [255, 255, 200]); p.px(4, b - 31, [255, 255, 200]); p.px(4, b - 6, kc);
+      p.rect(3, b - 3, 2, 3, [120, 240, 255]);
       return;
     }
     default: { // space-age spire
@@ -839,6 +949,34 @@ function center(p: Painter, W: number, H: number, s: number, roofC: RGB, wallC: 
       for (let y = b - 29; y < b - 8; y += 2) p.rect(2, y, 8, 1, shade(g, 0.8));
       p.rect(2, b - 30, 1, 22, shade(g, 1.3));
       p.rect(5, b - 34, 2, 4, [150, 160, 170]); flag(p, 6, b - 38 + 4, kc);
+      return;
+    }
+    case 10: { // solar capitol: tower with rings and a dish
+      const c: RGB = [236, 232, 224];
+      p.rect(0, b - 10, W, 10, shade(c, 0.95)); p.windows(1, b - 9, W, 8, 6, 3, [90, 200, 240], 1, 2);
+      p.rect(3, b - 40, 6, 31, c); p.rect(8, b - 40, 1, 31, shade(c, 0.8));
+      for (let y = b - 36; y < b - 10; y += 6) p.rect(2, y, 8, 1, [235, 130, 60]);
+      p.rect(1, b - 44, 10, 2, [50, 70, 140]); p.rect(5, b - 46, 2, 2, WHITE); p.px(6, b - 47, [255, 60, 60]);
+      p.rect(5, b - 30, 2, 2, kc); p.rect(5, b - 4, 2, 4, [255, 150, 60]);
+      return;
+    }
+    case 11: { // core nexus: obsidian pyramid with violet core
+      const c: RGB = [44, 40, 62];
+      for (let r = 0; r < 46; r++) { const wv = Math.max(2, W - Math.floor(r / 4)); p.rect((W - wv) / 2, b - 1 - r, wv, 1, r % 5 === 0 ? [120, 80, 180] : c); }
+      p.rect(5, b - 30, 2, 22, [190, 120, 255]); p.rect(4, b - 20, 4, 4, [220, 170, 255]);
+      p.px(5, b - 49, [240, 210, 255]); p.px(6, b - 50, [240, 210, 255]); p.rect(5, b - 46, 2, 1, kc);
+      return;
+    }
+    case 12: { // galactic spire with halo rings
+      const c: RGB = [228, 224, 246];
+      for (let y = 0; y < 52; y++) {
+        const wv = y < 8 ? 12 : y < 22 ? 8 : y < 38 ? 6 : y < 48 ? 4 : 2;
+        const x0 = (W - wv) / 2, hw = wv / 2;
+        p.rect(x0, b - 1 - y, hw, 1, y % 7 === 0 ? [250, 200, 236] : shade(c, 1.1));
+        p.rect(x0 + hw, b - 1 - y, hw, 1, y % 7 === 0 ? [210, 150, 200] : shade(c, 0.8));
+      }
+      p.rect(0, b - 26, W, 1, [120, 240, 255]); p.rect(1, b - 40, W - 2, 1, [120, 240, 255]); p.rect(2, b - 50, W - 4, 1, [255, 200, 240]);
+      p.rect(5, b - 34, 2, 2, kc); p.px(5, b - 55, [255, 255, 200]); p.px(6, b - 56, [255, 255, 200]);
       return;
     }
     default: { // star spire
