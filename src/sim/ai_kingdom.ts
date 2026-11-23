@@ -49,6 +49,25 @@ export function updateKingdom(g: Game, k: Kingdom): void {
   if (k.t2 % 2 === 1) specialOps(g, k);
   updateInfrastructure(g, k);
   if (k.t2 % 10 === 7) considerSplit(g, k);
+  if (k.t2 % 8 === 5) conurbations(g, k);
+}
+
+/** Established towns that sit close together grow into one big city. */
+function conurbations(g: Game, k: Kingdom): void {
+  if (k.era < 3 || k.cities.length < 4) return;
+  const reach = 14 + k.era;
+  const cap = 150 + k.era * 30;
+  for (const a of k.cities) {
+    if (!a.center || a.members.length < 40) continue;
+    for (const b of k.cities) {
+      if (b === a || !b.center || b === k.capital || b.members.length > a.members.length || b.members.length < 12 || g.year - b.founded < 40) continue;
+      if (a.members.length + b.members.length > cap * 1.3) continue;
+      if (Math.hypot(a.x - b.x, a.y - b.y) > reach || islandOf(g, a.x, a.y) !== islandOf(g, b.x, b.y)) continue;
+      if (!g.rng.chance(0.12)) continue;
+      g.mergeCities(a, b);
+      return;
+    }
+  }
 }
 
 // ------------------------------------------------------------------ research
@@ -203,13 +222,20 @@ function diplomacy(g: Game, k: Kingdom): void {
           } else g.declareWar(k, o, g.rng.pick(reasons));
         }
       }
-      // peaceful unification of small kin nations
-      if (!o.player && o.species === k.species && r.opinion > 45 && o.cities.length <= 2 && o.pop < k.pop * 0.4 && dist < 70 && o.wars === 0 && g.rng.chance(0.006)) {
+      // unions: close allies federate and small neighbours join a powerful friend — but nobody
+      // gets to swallow half the world peacefully
+      // (allies fighting a common enemy may unite in wartime too)
+      const sharedWars = g.kingdoms.every(x => !o.atWar(x) || k.atWar(x) || x === k);
+      if (!k.player && !o.player && sharedWars && dist < 90 && k.pop >= o.pop && k.pop + o.pop < g.personPop * 0.5) {
         const ro = o.relation(k);
-        if (ro.opinion > 30) {
-          for (const c of o.cities.slice()) g.captureCity(c, k, true, true);
-          continue;
-        }
+        const kin = o.species === k.species;
+        let p = 0;
+        if (r.ally && r.opinion > 40 && ro.opinion > 30) p += 0.004;
+        if (o.pop < k.pop * 0.4 && r.opinion > 20 && ro.opinion > 15) p += 0.003;
+        if (o.cities.length <= 3 && kin && r.opinion > 30 && ro.opinion > 20) p += 0.006;
+        if (kin) p *= 2;
+        if (k.era >= 6) p *= 1.5;
+        if (p > 0 && g.rng.chance(p)) { g.uniteNations(k, o, kin ? 'united with' : 'joined'); break; }
       }
       // trade agreements
       if (!r.trade && r.opinion > 20 && dist < 110 && hasTech(k, 'currency') && hasTech(o, 'currency') && g.rng.chance(0.003)) {

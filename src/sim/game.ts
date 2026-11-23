@@ -811,6 +811,80 @@ export class Game {
     if (k.cities.length === 0 && k.alive) this.destroyKingdom(k, null);
   }
 
+  /** Two neighbouring cities grow together: the smaller becomes a district of the larger. */
+  mergeCities(big: City, small: City): void {
+    if (big === small || big.dead || small.dead || big.kingdom !== small.kingdom) return;
+    const w = this.world;
+    const k = big.kingdom;
+    for (const u of small.members.slice()) { this.removeFromCity(u); this.addToCity(u, big); }
+    for (const b of small.buildings) { b.city = big; big.buildings.push(b); }
+    small.buildings = [];
+    for (const i of small.tiles) {
+      if (w.owner[i] !== small.id) continue;
+      w.owner[i] = big.id;
+      big.tiles.push(i);
+      w.markN(i);
+    }
+    small.tiles = [];
+    for (const f of small.farms) big.farms.push(f);
+    small.farms = [];
+    big.food += small.food;
+    big.loyalty = Math.max(big.loyalty, small.loyalty);
+    small.dead = true;
+    let i = k.cities.indexOf(small);
+    if (i >= 0) k.cities.splice(i, 1);
+    i = this.cities.indexOf(small);
+    if (i >= 0) this.cities.splice(i, 1);
+    this.cityById.delete(small.id);
+    if (k.capital === small) k.capital = big;
+    for (const u of this.units) if (u.order && u.order.city === small) u.order.city = big;
+    for (const o of this.kingdoms) {
+      if (o.campaign && o.campaign.target === small) o.campaign.target = big;
+      if (o.infra && o.infra.key.includes(String(small.id))) o.infra = null;
+      pruneLinks(this, o);
+    }
+    big.capacity = this.cityCapacity(big);
+    this.log(`🏙 ${small.name} and ${big.name} have grown together into one great city`, 'city', big.x, big.y, k.css);
+  }
+
+  /** A whole nation joins another: cities, people, armies and knowledge carry over. */
+  uniteNations(into: Kingdom, joiner: Kingdom, how: string): void {
+    if (into === joiner || !into.alive || !joiner.alive) return;
+    // wars the joiner fights alone end; wars against a common enemy carry on under one flag
+    for (const o of this.kingdoms.slice()) if (joiner.atWar(o) && o !== into && !into.atWar(o)) this.makePeace(joiner, o, 'as part of the union');
+    if (into.atWar(joiner)) { const r = into.relation(joiner), ro = joiner.relation(into); r.war = ro.war = false; }
+    const n = joiner.cities.length;
+    let pop = 0;
+    for (const c of joiner.cities.slice()) {
+      pop += c.members.length;
+      c.kingdom = into;
+      into.cities.push(c);
+      c.loyalty = Math.max(c.loyalty, 45);
+      c.revoltT = 0;
+      for (const u of c.members) { u.kingdom = into; u.order = null; u.isKing = false; }
+      for (const b of c.buildings) b.style = Math.min(b.style, Math.max(into.era, joiner.era));
+      for (const i of c.tiles) { this.world.mark(i); this.world.markN(i); }
+    }
+    joiner.cities = [];
+    // shared knowledge, treasuries and arsenals
+    for (let t = 0; t < NUM_TECH; t++) if (joiner.techs[t]) into.techs[t] = 1;
+    this.refreshTechs(into);
+    for (let r = 0; r < into.res.length; r++) into.res[r] += joiner.res[r] * 0.8;
+    into.warheads += joiner.warheads;
+    into.nuclearTested = into.nuclearTested || joiner.nuclearTested;
+    for (const u of this.units) if (u.kingdom === joiner) u.kingdom = into;
+    for (const u of this.units) if (u.kingdom === into && u.kind === UK.PERSON && u.job === 6) refreshStats(this, u);
+    joiner.links.clear();
+    joiner.infra = null;
+    joiner.campaign = null;
+    this.log(`🤝 ${this.kName(joiner)} ${how} ${this.kName(into)} — ${n} cities and ${pop.toLocaleString()} people join one nation`, 'treaty', into.capital ? into.capital.x : -1, into.capital ? into.capital.y : -1, into.css, true);
+    joiner.alive = false;
+    joiner.diedYear = this.year;
+    const i = this.kingdoms.indexOf(joiner);
+    if (i >= 0) this.kingdoms.splice(i, 1);
+    for (const o of this.kingdoms) { const r = o.rel.get(joiner.id); if (r) { r.war = false; r.ally = false; } }
+  }
+
   destroyKingdom(k: Kingdom, by: Kingdom | null, union = false): void {
     if (!k.alive) return;
     k.alive = false;

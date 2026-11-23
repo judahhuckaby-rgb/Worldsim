@@ -2,7 +2,7 @@
 import type { Game } from './game';
 import { Kingdom, City, ORD } from './entities';
 import { JOB, TPY, SHIPS } from './defs';
-import { RES } from './terrain';
+import { RES, T } from './terrain';
 import { canResearch, TECHS } from './tech';
 import { launchAirRaid, launchCruise, orbitalStrike, spawnBoat, landingSpot } from './ai_kingdom';
 import { MISSION } from './ai_units';
@@ -155,6 +155,66 @@ export function cmdFoundCity(g: Game, k: Kingdom, x: number, y: number): string 
   return `🏙 ${adults.length} settlers left ${src.name} to found a new city`;
 }
 
+/** Claim unsettled land for the nearest of your cities (brush). Returns the tiles claimed. */
+export function cmdClaimLand(g: Game, k: Kingdom, x: number, y: number, r: number): { n: number; msg: string } {
+  const w = g.world;
+  const R = Math.max(1, Math.min(8, r));
+  let n = 0, foreign = '', far = false;
+  const cx = Math.floor(x), cy = Math.floor(y), r0 = Math.ceil(R);
+  for (let dy = -r0; dy <= r0; dy++) for (let dx = -r0; dx <= r0; dx++) {
+    if (dx * dx + dy * dy > R * R + 0.5) continue;
+    const tx = cx + dx, ty = cy + dy;
+    if (!w.inb(tx, ty)) continue;
+    const i = ty * w.w + tx;
+    if (w.isWater(i) && !(w.ter[i] === T.SHALLOW)) continue;
+    if (w.owner[i]) {
+      const c = g.cityById.get(w.owner[i]);
+      if (c && c.kingdom !== k) foreign = c.kingdom.baseName;
+      continue;
+    }
+    // the nearest of our cities administers the new land
+    let best: City | null = null, bd = 1e9;
+    for (const c of k.cities) { const d = Math.abs(c.x - tx) + Math.abs(c.y - ty); if (d < bd) { bd = d; best = c; } }
+    if (!best || bd > 70) { far = true; continue; }
+    g.claimTile(best, i);
+    n++;
+  }
+  const msg = n ? `🚩 Claimed ${n} tiles of land` : foreign ? `That land belongs to ${foreign} — use 🏴 Take city, Diplomacy or ⚔ Attack` : far ? 'Too far from your cities — found a 🏙 New city out there first' : 'Nothing to claim here';
+  return { n, msg };
+}
+
+/** Take over a populated city without fighting: it may defect, or you can buy it. */
+export function cmdTakeCity(g: Game, k: Kingdom, c: City | null): string {
+  if (!c) return 'Tap on a city';
+  const o = c.kingdom;
+  if (o === k) return `${c.name} is already yours`;
+  if (k.atWar(o)) return cmdAttack(g, k, c);
+  const r = k.relation(o), ro = o.relation(k);
+  // an unhappy city may simply switch sides
+  if (c.loyalty < 15 && c !== o.capital && g.rng.chance(0.65)) {
+    g.captureCity(c, k, true);
+    g.log(`🏴 ${c.name} broke away from ${g.kName(o)} and chose to join ${g.kName(k)}`, 'conquest', c.x, c.y, k.css, true);
+    ro.opinion -= 20; ro.memory += 10;
+    return `🏴 ${c.name} welcomed your envoys and joined your nation!`;
+  }
+  if (c === o.capital && o.cities.length > 1) return `${g.kName(o)} will never sell its capital — try 🤝 Union or 👑 Demand in Diplomacy, or conquer it`;
+  if (o.cities.length === 1) return `${c.name} is all ${g.kName(o)} has left — propose a 🤝 Union instead`;
+  const price = Math.round(60 + c.members.length * 25 + c.buildings.length * 6);
+  if (k.res[RES.GOLD] < price) return `Buying ${c.name} would cost ${price} gold — you have ${Math.floor(k.res[RES.GOLD])}`;
+  const ratio = k.strength / Math.max(1, o.strength);
+  const share = c.members.length / Math.max(1, o.pop);
+  const p = 0.3 + ro.opinion / 120 + (ratio > 2 ? 0.2 : 0) + (r.ally ? 0.15 : 0) - share * 1.5 - (c.loyalty > 60 ? 0.15 : 0);
+  if (!g.rng.chance(Math.max(0.03, Math.min(0.9, p)))) {
+    ro.opinion -= 6;
+    return `${g.kName(o)} refused to sell ${c.name} for ${price} gold (they like you ${Math.round(ro.opinion)}/100)`;
+  }
+  k.res[RES.GOLD] -= price;
+  o.res[RES.GOLD] += price;
+  g.captureCity(c, k, true);
+  g.log(`💰 ${g.kName(k)} bought ${c.name} from ${g.kName(o)} for ${price} gold`, 'conquest', c.x, c.y, k.css, true);
+  return `💰 ${c.name} is yours — ${price} gold paid`;
+}
+
 export function cmdMobilize(g: Game, k: Kingdom): string {
   if (k.mobilizeT > g.tick) { k.mobilizeT = 0; return 'Demobilized — soldiers return to their jobs'; }
   k.mobilizeT = g.tick + TPY * 8;
@@ -170,7 +230,7 @@ export function cmdResearch(g: Game, k: Kingdom, idx: number): string {
 }
 
 // ------------------------------------------------------------------ diplomacy
-export type Proposal = 'peace' | 'alliance' | 'trade' | 'nap' | 'gift' | 'war';
+export type Proposal = 'peace' | 'alliance' | 'trade' | 'nap' | 'gift' | 'war' | 'union' | 'demand';
 
 export function propose(g: Game, k: Kingdom, o: Kingdom, what: Proposal): string {
   const r = k.relation(o), ro = o.relation(k);
@@ -208,6 +268,32 @@ export function propose(g: Game, k: Kingdom, o: Kingdom, what: Proposal): string
       if (k.atWar(o)) return 'Make peace first';
       if (yes((op + 40) / 60)) { r.nap = ro.nap = g.tick + TPY * 30; g.treaties++; g.log(`📜 ${g.kName(k)} and ${g.kName(o)} signed a 30-year non-aggression pact`, 'treaty', -1, -1, '#fc6', true); return '🕊 Non-aggression pact signed'; }
       return `${g.kName(o)} refused a non-aggression pact`;
+    case 'union': {
+      if (k.atWar(o)) return 'Make peace first';
+      const kin = o.species === k.species;
+      const p = 0.05 + (ro.opinion - 20) / 90 + (o.pop < k.pop * 0.5 ? 0.2 : o.pop > k.pop ? -0.3 : 0) + (r.ally ? 0.25 : 0) + (kin ? 0.1 : 0) - (o.wars > 0 ? 0.1 : 0);
+      if (yes(p)) { g.uniteNations(k, o, 'agreed to unite with'); return `🤝 ${o.baseName} joined your nation!`; }
+      ro.memory += 2;
+      return `${g.kName(o)} wants to stay independent (they like you ${Math.round(ro.opinion)}/100${o.pop > k.pop * 0.5 ? ', and they are too big to give up' : ''})`;
+    }
+    case 'demand': {
+      if (k.atWar(o)) return 'You are at war — conquer them';
+      const ratio = k.strength / Math.max(1, o.strength);
+      if (ratio < 2) {
+        ro.opinion -= 20; ro.memory += 10;
+        if (g.laws.war && g.rng.chance(0.3)) { g.declareWar(o, k, 'refusing to bow to threats'); return `${g.kName(o)} laughed at your demand and declared war!`; }
+        return `${g.kName(o)} laughed at your demand — you need an army at least twice as strong as theirs`;
+      }
+      const p = Math.min(0.85, (ratio - 2) * 0.15 + 0.1 + (ro.opinion + 50) / 400);
+      if (yes(p)) {
+        for (const x of g.kingdoms) if (x !== k && x !== o) { const rx = x.relation(k); rx.opinion -= 6; }
+        g.uniteNations(k, o, 'surrendered its independence to');
+        return `👑 ${o.baseName} submitted — its lands are now yours`;
+      }
+      ro.opinion -= 25; ro.memory += 12;
+      if (g.laws.war && g.rng.chance(0.25)) { g.declareWar(o, k, 'defying an ultimatum'); return `${g.kName(o)} refused and went to war!`; }
+      return `${g.kName(o)} refused your ultimatum (your army is ${ratio.toFixed(1)}× theirs)`;
+    }
     case 'gift': {
       const amt = Math.min(80, Math.floor(k.res[RES.GOLD]));
       if (amt < 20) return 'You need at least 20 gold to send a gift';

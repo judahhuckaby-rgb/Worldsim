@@ -5,7 +5,7 @@ import { Game, P } from '../src/sim/game';
 import { TPY, BLD } from '../src/sim/defs';
 import { TOOLS } from '../src/ui/tools';
 import { serialize, deserialize } from '../src/sim/save';
-import { cityAt, cmdAttack, cmdAirRaid, cmdMissiles, cmdOrbital, cmdNuke, cmdFoundCity, cmdMobilize, cmdResearch, propose } from '../src/sim/command';
+import { cityAt, cmdAttack, cmdAirRaid, cmdMissiles, cmdOrbital, cmdNuke, cmdFoundCity, cmdMobilize, cmdResearch, cmdClaimLand, cmdTakeCity, propose } from '../src/sim/command';
 import { RES } from '../src/sim/terrain';
 import { canResearch, NUM_TECH } from '../src/sim/tech';
 
@@ -43,6 +43,16 @@ out.push(cmdNuke(g, k, enemy.cities[enemy.cities.length - 1]));
 out.push(cmdFoundCity(g, k, cap.x + 20, cap.y + 5));
 out.push(cityAt(g, tgt.x, tgt.y)?.name || 'no city');
 for (const o of g.kingdoms) if (o !== k) for (const p of ['gift', 'trade', 'nap', 'alliance', 'peace'] as const) out.push(propose(g, k, o, p));
+// claim land around the capital, take a foreign city, union / demand
+let claimed = 0;
+for (let a = 0; a < 40; a++) claimed += cmdClaimLand(g, k, cap.x + Math.cos(a) * 25, cap.y + Math.sin(a) * 25, 4).n;
+out.push(`claimed ${claimed} tiles`);
+const before = k.cities.length, kingsBefore = g.kingdoms.length;
+for (const o of g.kingdoms.slice()) if (o !== k && o.alive) { out.push(cmdTakeCity(g, k, o.cities[o.cities.length - 1])); }
+for (const o of g.kingdoms.slice()) if (o !== k && o.alive) { out.push(propose(g, k, o, 'union')); }
+k.res[3] += 5000;
+for (const o of g.kingdoms.slice()) if (o !== k && o.alive) { out.push(propose(g, k, o, 'demand')); }
+out.push(`cities ${before} -> ${k.cities.length}, nations ${kingsBefore} -> ${g.kingdoms.length}, player pop ${k.pop}`);
 for (let t = 0; t < TPY * 6; t++) g.step();
 console.log(out.join('\n'));
 console.log(`after 6y: nukes ${g.stats.nukes} deaths +${g.stats.deaths - deaths0} fallout clouds ${g.disasters.filter(d => d.kind === 'fallout').length} enemy cities ${enemy.cities.length} alive ${enemy.alive}`);

@@ -36,6 +36,7 @@ Runs on **Windows** (Electron) and **Android** (APK, Capacitor), from one TypeSc
 - Every nation has its own flag; zoomed out, the map reads like a political world map
 - Trade agreements (with trade roads and gold), non-aggression pacts, alliances, border incidents, rivalries, rebellions
 - Overstretched nations split apart — civil wars or peaceful dissolutions (\"North X\" / \"South X\"); seafaring nations colonize other continents
+- Unions: close allies federate and small friendly neighbours join a powerful nation, bringing all their cities, people, armies and knowledge; nearby towns of one nation grow together into one great city
 - Wars are campaigns: armies of hundreds muster near the front, march together on one city, besiege and take it, then press on to the next; threatened cities call in reinforcements; seaborne invasions cross the water
 - Wars last while one side keeps winning and end in collapse or stalemate; named peace treaties hand over up to three cities and reparations
 - War map: zoomed out, arrows show every marching army and its strength
@@ -58,7 +59,7 @@ Runs on **Windows** (Electron) and **Android** (APK, Capacitor), from one TypeSc
 - Knowledge diffuses between neighbours; you can inspire, gift technologies, or plunge a kingdom into a dark age
 
 **Lead a nation**
-- Press 🎮 Take command on any nation: a command bar lets you send the army against a city (by sea too), call air raids, cruise missiles, orbital strikes and nukes, found new cities, mobilize, choose research, and negotiate peace, alliances, trade and pacts — the economy runs itself
+- Press 🎮 Take command on any nation: a command bar lets you send the army against a city (by sea too), call air raids, cruise missiles, orbital strikes and nukes, claim unsettled land by painting it, take over foreign cities without war (unhappy cities defect, others can be bought), found new cities, mobilize, choose research, and negotiate peace, alliances, trade, pacts, unions (a nation joins yours) and ultimatums (a much weaker nation submits) — the economy runs itself
 
 **God powers & disasters**
 - Rain, lightning, fire, meteors, meteor showers, giant asteroids, tsunamis, solar flares, earthquakes, tornadoes, volcanoes, blizzards, droughts, acid rain, plague, pandemics, alien invasions

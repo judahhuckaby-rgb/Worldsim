@@ -5,7 +5,7 @@ import { Kingdom } from '../sim/entities';
 import { RES, RES_ICONS } from '../sim/terrain';
 import { eraName, TECHS } from '../sim/tech';
 import { nukeBanned } from '../sim/politics';
-import { cityAt, cmdAttack, cmdAirRaid, cmdMissiles, cmdOrbital, cmdNuke, cmdFoundCity, cmdMobilize, propose, Proposal } from '../sim/command';
+import { cityAt, cmdAttack, cmdAirRaid, cmdMissiles, cmdOrbital, cmdNuke, cmdFoundCity, cmdMobilize, cmdClaimLand, cmdTakeCity, propose, Proposal } from '../sim/command';
 
 function esc(s: string): string {
   return s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!));
@@ -72,6 +72,20 @@ export class CommandUI {
     });
   }
 
+  /** A brush tool: drag over the map to claim land. */
+  private brush(name: string, desc: string, fn: (g: Game, x: number, y: number, r: number) => { n: number; msg: string }): void {
+    let total = 0, lastMsg = 0;
+    this.app.selectTool({
+      id: 'cmd-' + name, cat: 'cmd', name, icon: '', mode: 'brush', interval: 70, desc,
+      apply: (g, x, y, r) => {
+        const res = fn(g, x, y, r);
+        total += res.n;
+        const now = performance.now();
+        if (now - lastMsg > 1500) { lastMsg = now; this.ui.toast(res.n || !total ? res.msg : `🚩 ${total} tiles claimed so far`); }
+      },
+    });
+  }
+
   private orders(): Order[] {
     const g = () => this.app.game;
     const kk = () => this.k!;
@@ -86,6 +100,10 @@ export class CommandUI {
         run: () => this.pick('Orbital strike', 'Tap an enemy city to drop kinetic rods from orbit', (gg, x, y) => cmdOrbital(gg, kk(), cityAt(gg, x, y)), true) },
       { id: 'nuke', icon: '☢️', name: 'Nuke', ok: (k, gg) => (!gg.laws.nukes ? 'Disabled in world laws' : !k.caps.nukes ? 'Needs Nuclear Weapons' : nukeBanned(gg, k) ? 'You signed the ban (tap to withdraw)' : k.warheads <= 0 ? 'No warheads yet' : null),
         run: () => this.pick('Nuclear strike', 'Tap a city to launch a nuclear missile at it. There is no undo.', (gg, x, y) => cmdNuke(gg, kk(), cityAt(gg, x, y))) },
+      { id: 'claim', icon: '🚩', name: 'Claim land', ok: () => null,
+        run: () => this.brush('Claim land', 'Drag over unsettled land to add it to your nation (use +/− for brush size)', (gg, x, y, r) => cmdClaimLand(gg, kk(), x, y, r)) },
+      { id: 'take', icon: '🏴', name: 'Take city', ok: () => null,
+        run: () => this.pick('Take a city', "Tap a foreign city: unhappy cities may defect to you, others you can buy with gold (at war this attacks)", (gg, x, y) => cmdTakeCity(gg, kk(), cityAt(gg, x, y))) },
       { id: 'city', icon: '🏙️', name: 'New city', ok: () => null,
         run: () => this.pick('Found a city', 'Tap empty land: settlers walk there and found a new city', (gg, x, y) => cmdFoundCity(gg, kk(), x, y)) },
       { id: 'mobilize', icon: '🎖️', name: 'Mobilize', ok: () => null, run: () => { this.ui.toast(cmdMobilize(g(), kk())); this.render(true); } },
@@ -148,11 +166,11 @@ export class CommandUI {
         const btn = (p: Proposal, label: string, cls = '') => `<button class="btn ${cls}" data-p="${p}" data-o="${o.id}">${label}</button>`;
         const acts = r.war
           ? btn('peace', '☮ Offer peace', 'primary')
-          : [btn('war', '⚔ War', 'danger'), r.ally ? '' : btn('alliance', '🤝 Alliance'), r.trade ? '' : btn('trade', '📜 Trade'), r.nap > g.tick ? '' : btn('nap', '🕊 Pact')].join('');
+          : [btn('war', '⚔ War', 'danger'), r.ally ? '' : btn('alliance', '🤝 Alliance'), r.trade ? '' : btn('trade', '📜 Trade'), r.nap > g.tick ? '' : btn('nap', '🕊 Pact'), btn('union', '🧩 Union'), btn('demand', '👑 Demand')].join('');
         return `<div class="drow"><div class="row">${this.ui.flag(o)}<span class="grow"><b>${esc(g.kName(o))}</b><br><span class="sub">${eraName(o.era)} · 👥 ${o.pop} · opinion of you ${Math.round(ro.opinion)}</span></span>${st}${tags}</div>
           <div class="btns">${acts}${btn('gift', '🎁 Gift gold')}</div></div>`;
       }).join('');
-      return `<h1>🤝 Diplomacy — ${esc(g.kName(k))}</h1><div class="sub">Proposals succeed more often with nations that like you. Gifts improve opinion; breaking a pact angers everyone.</div><div class="list">${rows || '<div class="sub">No other nations exist</div>'}</div>`;
+      return `<h1>🤝 Diplomacy — ${esc(g.kName(k))}</h1><div class="sub">Proposals succeed more often with nations that like you. 🧩 Union asks a nation to join yours (easier with allies and smaller nations). 👑 Demand tells a much weaker nation to submit — or else. Gifts improve opinion; breaking a pact angers everyone.</div><div class="list">${rows || '<div class="sub">No other nations exist</div>'}</div>`;
     };
     const bind = () => this.ui.modal.querySelectorAll<HTMLElement>('[data-p]').forEach(b => b.onclick = () => {
       const o = g.kingdomById.get(Number(b.dataset.o));

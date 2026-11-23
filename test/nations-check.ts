@@ -18,7 +18,7 @@ g.laws.maxPop = suggestedMaxPop(world.n);
 g.populateWorld(8, true);
 console.log(`world ${w}x${h} maxPop ${g.laws.maxPop}`);
 const seen = new Set<any>();
-let conquests = 0, ceded = 0, campaigns = 0, bigArmy = 0, rebellions = 0, splits = 0, falls = 0;
+let conquests = 0, ceded = 0, campaigns = 0, bigArmy = 0, rebellions = 0, splits = 0, falls = 0, unions = 0, merges = 0;
 const t0 = Date.now();
 let msY = 0;
 for (let y = 1; y <= years; y++) {
@@ -34,13 +34,15 @@ for (let y = 1; y <= years; y++) {
     if (/rebelled/.test(e.text)) rebellions++;
     if (/split/.test(e.text)) splits++;
     if (/has fallen|collapsed/.test(e.text)) falls++;
+    if (/united with|joined .* — \d+ cities|agreed to unite|surrendered its independence/.test(e.text)) unions++;
+    if (/grown together/.test(e.text)) merges++;
   }
   if (y % 50 === 0) {
     const ks = g.kingdoms.slice().sort((a, b) => b.pop - a.pop);
     let roads = 0, unowned = 0;
     for (let i = 0; i < g.world.n; i++) if (isRoad(g.world.ter[i])) { roads++; if (!g.world.owner[i]) unowned++; }
     const wars = g.kingdoms.reduce((s, k) => s + k.wars, 0) / 2;
-    console.log(`Y${y} pop=${g.personPop} kingdoms=${g.kingdoms.length} wars=${wars} conquests=${conquests} ceded=${ceded} campaigns=${campaigns} maxArmy=${bigArmy} rebellions=${rebellions} splits=${splits} falls=${falls} roads=${roads}(${unowned} rural) ms/yr=${msY.toFixed(0)}`);
+    console.log(`Y${y} pop=${g.personPop} kingdoms=${g.kingdoms.length} wars=${wars} conquests=${conquests} ceded=${ceded} campaigns=${campaigns} maxArmy=${bigArmy} rebellions=${rebellions} splits=${splits} falls=${falls} unions=${unions} merges=${merges} roads=${roads}(${unowned} rural) ms/yr=${msY.toFixed(0)}`);
     console.log('   top: ' + ks.slice(0, 6).map(k => `${k.baseName} e${k.era} p${k.pop} c${k.cities.length} s${k.soldiers}`).join(' | '));
   }
 }
